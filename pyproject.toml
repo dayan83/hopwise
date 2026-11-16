@@ -7,9 +7,13 @@ requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.4",
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

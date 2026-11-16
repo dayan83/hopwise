@@ -95,6 +95,35 @@ def search_stations(name: str, config: PTVConfig | None = None, *,
     return stations
 
 
+def get_departures(stop_id: int, route_type: int = 0, max_results: int = 5, *,
+                   config: PTVConfig | None = None,
+                   transport: httpx.BaseTransport | None = None) -> list[dict]:
+    """Return departures in PTV response order, retaining UTC times unchanged.
+
+    Missing fields are None, including estimates that PTV does not provide.
+    Empty departures return []; malformed response structures raise PTVRequestError.
+    """
+    for name, value, minimum in (("stop_id", stop_id, 1),
+                                 ("route_type", route_type, 0),
+                                 ("max_results", max_results, 1)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+    payload = _get_json(
+        f"/v3/departures/route_type/{route_type}/stop/{stop_id}", config,
+        params={"max_results": str(max_results)}, transport=transport,
+    )
+    if not isinstance(payload, dict) or not isinstance(payload.get("departures"), list):
+        raise PTVRequestError("PTV returned an invalid departures response")
+    fields = ("route_id", "direction_id", "scheduled_departure_utc",
+              "estimated_departure_utc", "platform_number")
+    departures = []
+    for departure in payload["departures"][:max_results]:
+        if not isinstance(departure, dict):
+            raise PTVRequestError("PTV returned an invalid departures response")
+        departures.append({field: departure.get(field) for field in fields})
+    return departures
+
+
 def _get_json(path: str, config: PTVConfig | None = None, *,
               params: dict[str, str] | None = None,
               transport: httpx.BaseTransport | None = None) -> dict:

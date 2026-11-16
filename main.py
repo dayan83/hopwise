@@ -10,6 +10,5 @@ def main():
         raise SystemExit(str(exc)) from None
     print(json.dumps(result, indent=2))
 
-
 if __name__ == "__main__":
     main()
