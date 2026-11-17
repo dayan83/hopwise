@@ -5,6 +5,7 @@ import hmac
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -122,6 +123,94 @@ def get_departures(stop_id: int, route_type: int = 0, max_results: int = 5, *,
             raise PTVRequestError("PTV returned an invalid departures response")
         departures.append({field: departure.get(field) for field in fields})
     return departures
+
+
+def get_disruptions_for_route(route_id: int, *, config: PTVConfig | None = None,
+                              transport: httpx.BaseTransport | None = None) -> list[dict]:
+    """Return metro_train and general notices from the route-scoped endpoint.
+
+    Preserve PTV statuses without inferring activity. Dates are aware UTC
+    datetimes or None. General notices retain their broader grouping context.
+    """
+    if isinstance(route_id, bool) or not isinstance(route_id, int) or route_id < 0:
+        raise ValueError("route_id must be a nonnegative integer")
+    payload = _get_json(f"/v3/disruptions/route/{route_id}", config, transport=transport)
+    if not isinstance(payload, dict):
+        raise PTVRequestError("PTV returned an invalid disruptions response")
+    groups = payload.get("disruptions")
+    if groups is None:
+        return []
+    if not isinstance(groups, dict):
+        raise PTVRequestError("PTV returned an invalid disruptions response")
+
+    disruptions = []
+    by_id = {}
+    for group in ("metro_train", "general"):
+        records = groups.get(group)
+        if records is None:
+            continue
+        if not isinstance(records, list):
+            raise PTVRequestError("PTV returned an invalid disruptions response")
+        for record in records:
+            disruption = _parse_disruption(record)
+            disruption["source_groups"] = [group]
+            disruption_id = disruption["disruption_id"]
+            if disruption_id is None or disruption_id not in by_id:
+                disruptions.append(disruption)
+                if disruption_id is not None:
+                    by_id[disruption_id] = disruption
+                continue
+            # Metro records come first. Keep their nonmissing scalar values,
+            # while retaining additional scope and affected entities from duplicates.
+            existing = by_id[disruption_id]
+            if group not in existing["source_groups"]:
+                existing["source_groups"].append(group)
+            for field, value in disruption.items():
+                if existing[field] is None:
+                    existing[field] = value
+                elif field in ("routes", "stops") and value is not None:
+                    for entity in value:
+                        if entity not in existing[field]:
+                            existing[field].append(entity)
+    return disruptions
+
+
+def _parse_disruption(record) -> dict:
+    if not isinstance(record, dict):
+        raise PTVRequestError("PTV returned an invalid disruption record")
+    disruption_id = record.get("disruption_id")
+    if disruption_id is not None and (isinstance(disruption_id, bool)
+            or not isinstance(disruption_id, int) or disruption_id < 0):
+        raise PTVRequestError("PTV returned an invalid disruption ID")
+    result = {"disruption_id": disruption_id}
+    for field in ("title", "description", "disruption_status", "disruption_type", "url"):
+        value = record.get(field)
+        if value is not None and not isinstance(value, str):
+            raise PTVRequestError("PTV returned an invalid disruption field")
+        result[field] = value
+    for field in ("from_date", "to_date", "last_updated"):
+        result[field] = _parse_disruption_datetime(record.get(field))
+    for field in ("routes", "stops"):
+        value = record.get(field)
+        if value is not None and (not isinstance(value, list)
+                or any(not isinstance(entity, dict) for entity in value)):
+            raise PTVRequestError("PTV returned invalid affected routes or stops")
+        result[field] = [dict(entity) for entity in value] if value is not None else None
+    return result
+
+
+def _parse_disruption_datetime(value) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            timestamp = datetime.fromisoformat(value)
+            if timestamp.tzinfo is not None:
+                return timestamp.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            pass
+    # Do not guess a timezone or expose the raw field in an error message.
+    raise PTVRequestError("PTV returned an invalid disruption timestamp")
 
 
 def _get_json(path: str, config: PTVConfig | None = None, *,
