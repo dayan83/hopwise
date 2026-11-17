@@ -11,6 +11,9 @@ from urllib.parse import quote
 
 import httpx
 from dotenv import load_dotenv
+from pydantic import ValidationError
+
+from models import Departure, DeparturesResponse, Disruption
 
 
 @dataclass(frozen=True)
@@ -104,25 +107,73 @@ def get_departures(stop_id: int, route_type: int = 0, max_results: int = 5, *,
     Missing fields are None, including estimates that PTV does not provide.
     Empty departures return []; malformed response structures raise PTVRequestError.
     """
+    payload = _get_departures_payload(stop_id, route_type, max_results, config=config,
+                                      transport=transport)
+    fields = ("route_id", "direction_id", "scheduled_departure_utc",
+              "estimated_departure_utc", "platform_number")
+    return [{field: departure.get(field) for field in fields}
+            for departure in payload["departures"][:max_results]]
+
+
+def get_departures_response(stop_id: int, route_type: int = 0, max_results: int = 5, *,
+                            config: PTVConfig | None = None,
+                            transport: httpx.BaseTransport | None = None) -> DeparturesResponse:
+    """Preserve departure identifiers and expanded notices from one API request."""
+    payload = _get_departures_payload(stop_id, route_type, max_results, config=config,
+                                      transport=transport, expand_disruptions=True)
+    expanded = payload.get("disruptions")
+    if expanded is None:
+        expanded = {}
+    if not isinstance(expanded, dict):
+        raise PTVRequestError("PTV returned invalid expanded disruptions")
+    try:
+        departures = [Departure.model_validate(record)
+                      for record in payload["departures"][:max_results]]
+        notices = []
+        for key, record in expanded.items():
+            # Null/empty placeholders contain no details; let the service resolve the ID.
+            if record is None or record == {}:
+                continue
+            if not isinstance(record, dict):
+                raise PTVRequestError("PTV returned invalid expanded disruption details")
+            data = dict(record)
+            key_id = int(key) if str(key).isdecimal() else None
+            if data.get("disruption_id") is None:
+                if key_id is None:
+                    raise PTVRequestError("PTV returned an invalid expanded disruption ID")
+                data["disruption_id"] = key_id
+            elif key_id is not None and data["disruption_id"] != key_id:
+                raise PTVRequestError("PTV returned mismatched expanded disruption IDs")
+            notices.append(Disruption.model_validate(_parse_disruption(data)))
+        return DeparturesResponse(departures=departures, disruptions=notices)
+    except ValidationError:
+        pass
+    # Model errors may contain API input; expose only a safe summary.
+    raise PTVRequestError("PTV returned invalid structured departure data")
+
+
+def _get_departures_payload(stop_id: int, route_type: int, max_results: int, *,
+                            config: PTVConfig | None = None,
+                            transport: httpx.BaseTransport | None = None,
+                            expand_disruptions: bool = False) -> dict:
     for name, value, minimum in (("stop_id", stop_id, 1),
                                  ("route_type", route_type, 0),
                                  ("max_results", max_results, 1)):
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} must be an integer >= {minimum}")
+    params = {"max_results": str(max_results)}
+    if expand_disruptions:
+        params["expand"] = "5"  # PTV V3 expansion enum: Disruption.
     payload = _get_json(
         f"/v3/departures/route_type/{route_type}/stop/{stop_id}", config,
-        params={"max_results": str(max_results)}, transport=transport,
+        params=params, transport=transport,
     )
     if not isinstance(payload, dict) or not isinstance(payload.get("departures"), list):
         raise PTVRequestError("PTV returned an invalid departures response")
-    fields = ("route_id", "direction_id", "scheduled_departure_utc",
-              "estimated_departure_utc", "platform_number")
-    departures = []
     for departure in payload["departures"][:max_results]:
         if not isinstance(departure, dict):
             raise PTVRequestError("PTV returned an invalid departures response")
-        departures.append({field: departure.get(field) for field in fields})
-    return departures
+    return payload
 
 
 def get_disruptions_for_route(route_id: int, *, config: PTVConfig | None = None,

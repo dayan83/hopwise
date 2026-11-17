@@ -188,3 +188,104 @@ uv run pytest -q
 Tests use fake credentials and mocked HTTP responses, covering planned/current
 notices, general groups, deduplication, unknown dates, missing fields, errors,
 Melbourne time conversion, and the complete search/departure/disruption flow.
+
+## Departures with associated disruptions
+
+Install the updated dependencies and run the integrated Richmond example:
+
+```powershell
+uv sync --locked
+uv run python departure_board.py
+```
+
+`departure_board.py` selects a unique Richmond station using the existing search
+function and passes its stop ID to `departure_service.get_departures_with_disruptions()`.
+The service returns structured data; the script converts times to Melbourne time
+and prints notices, IDs whose details could not be resolved, and separate
+contextual notices. It preserves the distinction between scheduled times and
+real-time estimates. A missing estimate stays `None` and displays as "unavailable".
+
+The separation of responsibilities is:
+
+| Component | Responsibility |
+| --- | --- |
+| `models.py` | Pydantic validation and the structured input/output contracts |
+| `ptv.py` | Authentication, HTTP requests, response validation and parsing |
+| `departure_service.py` | ID-based associations, shared lookups and fallback request deduplication |
+| `departure_board.py` | Station selection and console presentation |
+
+The API client exposes `get_departures_response()` for the richer data. It calls
+the same departures endpoint with `expand=5` (PTV's Disruption expansion enum),
+preserving the optional expanded `disruptions` dictionary alongside the departures.
+This response shape was verified against PTV's public Swagger schema; expansion
+can still be absent, null, or incomplete and is handled accordingly.
+The existing `get_departures()` and route-disruption functions keep their current
+dictionary interfaces, so existing scripts keep working. Both departure paths
+share one request implementation; the service does not call both paths.
+
+The new models are:
+
+| Model | Contents |
+| --- | --- |
+| `Departure` | `stop_id`, `route_id`, `run_ref`, `direction_id`, scheduled/estimated UTC times, platform and `disruption_ids` |
+| `Disruption` | Existing notice fields, dates, affected routes/stops and PTV source groups |
+| `DeparturesResponse` | Typed departures and expanded notices from the same request |
+| `DepartureWithDisruptions` | One departure, its ID-matched notices and unresolved IDs |
+| `DepartureBoard` | Selected stop ID, enriched departures and separate contextual/route-level notices |
+
+All timestamps in these models are timezone-aware and normalized to UTC. Naive
+timestamps are rejected rather than assigned the machine's timezone. Optional
+or empty timestamps become `None`. Disruption statuses are preserved exactly.
+Pydantic is used for these new data contracts; the existing configuration
+dataclass and scripts have not been migrated.
+
+The service first indexes expanded notices by `disruption_id`. It links a notice
+to a departure only when that ID appears in the departure's `disruption_ids`.
+A shared route, overlapping date window, title, or PTV status does not create an
+association. A PTV `general` notice can still be directly associated when its ID
+is explicitly referenced; group scope and departure association are separate.
+
+If referenced IDs are missing from expansion, the service uses the existing
+route-disruption function, requesting each necessary route at most once per
+service call. Retrieved records are shared across all departures, including
+different routes referring to the same disruption. Resolved IDs do not trigger
+further lookups. There is no persistent cache.
+
+`unresolved_disruption_ids` retains referenced IDs whose details remain missing
+after successful lookups, including departures without a usable route ID.
+Missing `disruption_ids` (`None`) means PTV did not supply association information;
+an empty list means it listed no IDs. Neither is a claim that the service is
+unaffected. Failed API calls remain sanitized errors, not empty notice lists.
+
+Unreferenced expanded records appear in `contextual_notices`. Unreferenced records
+from necessary route lookups appear in `route_notices`, keyed by the queried route
+ID. Notices explicitly referenced by any displayed departure are excluded from
+these contextual lists to avoid presenting a direct association as merely general.
+No extra route calls are made solely to populate contextual information. Thus a
+board with no contextual notices is not an exhaustive disruption report.
+
+Example use with a stop ID returned by station search:
+
+```python
+from departure_service import get_departures_with_disruptions
+
+board = get_departures_with_disruptions(stop_id, max_results=5)
+for entry in board.departures:
+    print(entry.departure.run_ref, entry.departure.scheduled_departure_utc)
+    print([notice.title for notice in entry.associated_disruptions])
+    print(entry.unresolved_disruption_ids)
+```
+
+Association indicates an API-provided relationship. The service does not infer
+cancellation, a delay duration, or any other specific impact from that relationship.
+
+Run the full offline suite:
+
+```powershell
+uv run pytest -q
+```
+
+The new tests cover expanded-detail reuse, shared disruption IDs, route lookup
+deduplication, unlinked route notices, unresolved details, missing association
+data/estimates, timezone-aware models, and API failures. The original tests
+continue to run unchanged.
