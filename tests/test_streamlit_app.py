@@ -6,7 +6,8 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import ptv
-from models import DeparturesResponse
+import departure_service
+from models import DepartureBoard
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -18,8 +19,8 @@ STATIONS = [
 
 @pytest.fixture(autouse=True)
 def departures(monkeypatch):
-    fetch = Mock(return_value=DeparturesResponse())
-    monkeypatch.setattr(ptv, "get_departures_response", fetch)
+    fetch = Mock(return_value=DepartureBoard(stop_id=1))
+    monkeypatch.setattr(departure_service, "get_departures_with_disruptions", fetch)
     return fetch
 
 

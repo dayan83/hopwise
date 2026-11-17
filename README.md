@@ -345,8 +345,8 @@ empty searches, no matches, validation/configuration errors and API failures.
 The departure display follows this flow:
 
 ```text
-Selected stop ID -> get_departures_response() -> authenticated PTV request
-                -> typed Departure records -> Melbourne-time table
+Selected stop ID -> get_departures_with_disruptions() -> existing PTV client
+                -> typed DepartureBoard -> Melbourne-time table and notice expanders
 ```
 
 The client resolves `route_name` from expanded routes using `route_id`, and
@@ -366,7 +366,7 @@ seconds so a small delay is not rounded into "on time". A missing estimate is
 shown explicitly as "No estimate available", never as zero delay. These values
 describe PTV's estimate relative to the schedule, not a confirmed impact or cause.
 
-The latest typed response, its selected stop ID, the successful-refresh timestamp
+The latest typed board, its selected stop ID, the successful-refresh timestamp
 and any retrieval error are held in session state. Departures load once when a
 station is selected and again on an explicit refresh; ordinary reruns reuse the
 stored response. No automatic polling or global cache is used. The "Last
@@ -380,16 +380,46 @@ using Refresh departures without automatically retrying on every rerun.
 
 API/authentication and response parsing stay in `ptv.py`; timestamp validation
 stays in `models.py`; delay calculation stays in `departure_service.py`; widgets,
-refresh state and display formatting stay in `streamlit_app.py`. This page does
-not request route-disruption fallbacks or display disruption notices.
+refresh state and display formatting stay in `streamlit_app.py`. The UI delegates
+notice association and necessary route-disruption fallbacks to the existing
+`get_departures_with_disruptions()` service.
+
+The table's Notices column references the service's `associated_disruptions`
+for each departure. Full notice descriptions appear in collapsed expanders below
+the table, once per disruption ID even when several departures share a notice.
+PTV status, type, local dates and source information are kept with the notice.
+Missing descriptions and unknown end dates have explicit placeholders.
+
+`unresolved_disruption_ids` appears as "Details unavailable for IDs ..." in the
+departure row. Missing association data remains distinct from an explicitly
+empty ID list; neither is presented as a guarantee that the train is unaffected.
+The UI does not match IDs, infer associations from routes or dates, or change
+the Day 5 matching algorithm. It only formats the relationships already returned
+by the service and deduplicates their display.
+
+Unlinked notices from `contextual_notices` and `route_notices` appear separately
+under Other route/station notices, with the response/route context labelled.
+Repeated contextual IDs share one expander that lists all returned contexts.
+Notices without IDs remain separate because their identity cannot be established.
+A notice's PTV `general` group does not override an explicit departure association.
+
+Association alone is not proof of delay or its cause. The Timing column continues
+to depend solely on the estimate/schedule comparison, regardless of linked
+notices. Expanding a description does not fetch data again. Refresh updates the
+whole departure/notice board together; failed refreshes retain the previous board
+and successful-refresh timestamp with a warning.
 
 Run the relevant tests or the full offline suite:
 
 ```powershell
 uv run pytest -q tests/test_departure_delay.py tests/test_departures_response.py tests/test_streamlit_app.py tests/test_streamlit_departures.py
+uv run pytest -q tests/test_streamlit_disruptions.py
 uv run pytest -q
 ```
 
 Tests cover route/run expansion, missing estimates versus on-time estimates,
 early/late departures, daylight saving, refreshing, failed refreshes, switching
 stations, empty results, and the client/model/UI flow using mocked responses.
+Disruption UI tests also cover shared notices, unresolved IDs, missing fields,
+planned statuses, contextual notice deduplication, refreshes and reuse of the
+real Day 5 service with mocked HTTP responses and a single route fallback.

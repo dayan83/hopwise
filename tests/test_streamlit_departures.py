@@ -7,7 +7,8 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import ptv
-from models import Departure, DeparturesResponse
+import departure_service
+from models import Departure, DepartureBoard, DepartureWithDisruptions
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -21,7 +22,8 @@ def response(**overrides):
             "scheduled_departure_utc": "2026-11-17T00:00:00Z",
             "estimated_departure_utc": "2026-11-17T00:02:00Z"}
     data.update(overrides)
-    return DeparturesResponse(departures=[Departure.model_validate(data)])
+    return DepartureBoard(stop_id=1, departures=[
+        DepartureWithDisruptions(departure=Departure.model_validate(data))])
 
 
 @pytest.fixture
@@ -34,7 +36,7 @@ def search(monkeypatch):
 @pytest.fixture
 def fetch(monkeypatch):
     fetch = Mock(return_value=response())
-    monkeypatch.setattr(ptv, "get_departures_response", fetch)
+    monkeypatch.setattr(departure_service, "get_departures_with_disruptions", fetch)
     return fetch
 
 
@@ -59,6 +61,7 @@ def test_station_selection_loads_typed_departures_once(search, fetch):
         "Scheduled": "2026-11-17 11:00:00 AEDT", "Estimated": "2026-11-17 11:02:00 AEDT",
         "Route": "Glen Waverley", "Destination": "Flinders Street", "Platform": "2",
         "Timing": "2 min late (estimated)",
+        "Notices": "Association data not supplied",
     }
     timestamp = application.session_state["departures_refreshed_at"]
     assert timestamp.utcoffset().total_seconds() == 0
@@ -116,7 +119,7 @@ def test_winter_times_are_displayed_in_aest(search, fetch):
 
 
 def test_empty_departures_can_be_refreshed(search, fetch):
-    fetch.return_value = DeparturesResponse()
+    fetch.return_value = DepartureBoard(stop_id=1)
     application = selected_app()
     assert not application.exception
     assert not application.dataframe
@@ -187,7 +190,7 @@ def test_initial_error_is_retryable_without_automatic_repeated_calls(search, fet
 
 def test_ui_uses_real_client_models_and_one_mocked_departure_request(search, monkeypatch):
     paths = []
-    real_fetch = ptv.get_departures_response
+    real_fetch = departure_service.get_departures_with_disruptions
     config = ptv.PTVConfig("fake-id", "fake-key", "https://ptv.example")
 
     def handler(request):
@@ -203,7 +206,7 @@ def test_ui_uses_real_client_models_and_one_mocked_departure_request(search, mon
             "runs": {"run-A": {"destination_name": "Flinders Street"}},
         })
 
-    monkeypatch.setattr(ptv, "get_departures_response", lambda stop_id: real_fetch(
+    monkeypatch.setattr(departure_service, "get_departures_with_disruptions", lambda stop_id: real_fetch(
         stop_id, config=config, transport=httpx.MockTransport(handler)))
     application = selected_app()
     assert not application.exception
