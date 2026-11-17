@@ -289,3 +289,51 @@ The new tests cover expanded-detail reuse, shared disruption IDs, route lookup
 deduplication, unlinked route notices, unresolved details, missing association
 data/estimates, timezone-aware models, and API failures. The original tests
 continue to run unchanged.
+
+## Streamlit station search
+
+Install the updated dependencies, then start the local interface:
+
+```powershell
+uv sync --locked
+uv run streamlit run streamlit_app.py
+```
+
+Open the local URL printed by Streamlit (normally `http://localhost:8501`).
+The app uses the same root `.env` configuration as the console scripts. Enter
+a station name, click Search, and choose a match by station name, suburb and
+stop ID. An empty selector requires an explicit choice, even for one match.
+This first interface increment supports station search and selection only.
+
+`streamlit_app.py` contains the presentation and widget state. On form submission,
+it calls the existing `ptv.search_stations()` function. That function loads
+configuration, signs the request and filters metropolitan train stops as before;
+the UI contains no API or authentication implementation. Blank input produces
+a prompt; unsupported short/numeric names and missing configuration use the
+existing client's validation messages. No matches and request failures have
+separate messages, and neither leaves an old station selected.
+
+Streamlit reruns the script after widget interactions. `st.session_state` keeps
+the search results and selected stop ID for that browser session across reruns:
+
+- `station_results`: the last successful search's station dictionaries.
+- `selected_stop_id`: the selected integer stop ID, or `None` before selection.
+- `station_choice`: the dropdown's widget value, kept separate from the stored ID.
+- `search_complete`: distinguishes a successful empty search from an initial page or error.
+
+Each submitted search clears the earlier results and selection. Choosing a
+station updates `selected_stop_id` without another API request. The state is
+temporary and session-specific; it is not saved to disk or shared between users,
+and a browser reload starts a new session. Credentials stay in the existing
+server-side configuration and are not stored in UI state.
+
+Run the UI tests or the complete offline suite:
+
+```powershell
+uv run pytest -q tests/test_streamlit_app.py
+uv run pytest -q
+```
+
+The UI tests use Streamlit's `AppTest` with mocked search results/HTTP responses.
+They cover selection persistence, separate sessions, clearing stale results,
+empty searches, no matches, validation/configuration errors and API failures.
