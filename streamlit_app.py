@@ -1,10 +1,11 @@
-"""Hopwise station search and upcoming departures."""
+"""Hopwise station search, upcoming departures and AI assistant."""
 
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import streamlit as st
 
+from agent import AgentError, answer_question_from_env
 from departure_service import departure_delay, get_departures_with_disruptions
 from models import Departure, DepartureBoard, DepartureWithDisruptions, Disruption
 from ptv import PTVRequestError, search_stations
@@ -145,6 +146,43 @@ def _show_departures(stop_id: int):
     _show_disruptions(response, melbourne)
 
 
+def _show_ai_assistant():
+    st.divider()
+    st.subheader("Hopwise AI Assistant")
+    st.caption("Ask a complete question, such as: What are the next trains from Richmond, "
+               "and are there any disruptions? Each question is handled independently.")
+    messages = st.session_state.setdefault("chat_messages", [])
+    for message in messages:
+        with st.chat_message(message["role"]):
+            if message.get("error"):
+                st.error(message["content"])
+            else:
+                st.markdown(message["content"])
+    prompt = st.chat_input("Ask Hopwise about Melbourne trains", key="hopwise_chat_input")
+    if prompt is None:
+        return
+    question = prompt.strip()
+    if not question:
+        st.info("Enter a question to ask Hopwise.")
+        return
+    messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+    with st.chat_message("assistant"):
+        try:
+            with st.spinner("Checking train information and disruption notices..."):
+                answer = answer_question_from_env(question)
+        except (AgentError, PTVRequestError, ValueError):
+            # Raw SDK/backend diagnostics can contain secrets; show a fixed message.
+            message = ("Sorry, I couldn't retrieve train information right now. "
+                       "Check the assistant's API configuration or try again shortly.")
+            messages.append({"role": "assistant", "content": message, "error": True})
+            st.error(message)
+        else:
+            messages.append({"role": "assistant", "content": answer})
+            st.markdown(answer)
+
+
 def main():
     st.set_page_config(page_title="Hopwise")
     st.title("Hopwise")
@@ -206,6 +244,7 @@ def main():
             _show_departures(selected)
         else:
             _clear_departures()
+    _show_ai_assistant()
 
 
 if __name__ == "__main__":

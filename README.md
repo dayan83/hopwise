@@ -423,3 +423,184 @@ stations, empty results, and the client/model/UI flow using mocked responses.
 Disruption UI tests also cover shared notices, unresolved IDs, missing fields,
 planned statuses, contextual notice deduplication, refreshes and reuse of the
 real Day 5 service with mocked HTTP responses and a single route fallback.
+
+## First tool-calling agent
+
+The agent uses the official OpenAI Python SDK and Responses API. Its orchestration
+is separate from Streamlit and reuses the existing station search and deterministic
+departure/disruption service. There are exactly two tools:
+
+| Tool | Existing function |
+| --- | --- |
+| `search_stations(query)` | `ptv.search_stations(name)` |
+| `get_departures_with_disruptions(stop_id, limit)` | `departure_service.get_departures_with_disruptions(stop_id, max_results)` |
+
+Install the locked dependencies and add `OPENAI_API_KEY` and `OPENAI_MODEL` to
+your existing root `.env`. Use `.env.example` as a reference. Keep your existing
+PTV credentials in place. `OPENAI_MODEL` must name a model available to your API
+project that supports Responses function calling; no model is silently selected
+for you. Existing environment variables take precedence over `.env` values.
+
+```powershell
+uv sync --locked
+uv run python ask_hopwise.py "What are the next trains from Richmond, and are there any disruptions?"
+```
+
+Running `uv run python ask_hopwise.py` without a question uses that example.
+The command makes live OpenAI and PTV requests when configured. Model names,
+API access and credentials must be supplied by your own API project.
+
+The new components are:
+
+| File | Responsibility |
+| --- | --- |
+| `agent_tools.py` | Strict argument models, two function schemas, fixed allowlist and adapters to the existing services |
+| `agent.py` | Instructions, bounded tool-calling loop and shared environment-configured entry point |
+| `ask_hopwise.py` | Terminal arguments and output using the shared agent entry point |
+
+`answer_question()` sends the question, instructions and JSON tool definitions
+through `client.responses.create()`. For each `function_call` it validates the
+arguments, executes the allowlisted adapter and appends a `function_call_output`
+with the same `call_id`. It sends the accumulated transcript back to the model
+until a text answer is returned. Every response output item is retained,
+including reasoning items used by reasoning models.
+
+Parallel tool calls are disabled. A question may execute at most five sequential
+tool-call rounds. After round five, one final model request disables further
+tool selection; a model that still returns a call is rejected before execution.
+Invalid or unknown tool calls receive structured error results and consume a
+round. Incomplete model responses and OpenAI failures produce safe terminal
+errors. The CLI uses a 30-second SDK timeout without automatic request retries.
+
+The function schemas are generated from the same Pydantic models used for Python
+validation. Unexpected fields and coerced numeric strings/booleans are rejected.
+Search names must contain 3–100 characters and cannot be numeric. Stop IDs must
+be positive integers returned by a successful station search within the current
+question. Limits must be integers from 1 to 10; the model is instructed to use
+five unless the user requests another count. No model-supplied name is evaluated
+as Python or looked up dynamically in application globals.
+
+Tool results serialize the existing `DepartureBoard` and preserve associated
+notices, contextual notices, unresolved IDs and missing estimates. The adapters
+add Python-formatted Melbourne local times and the existing `departure_delay()`
+comparison, leaving the original UTC fields intact. The model is instructed to
+summarize these results, preserve statuses, distinguish missing information,
+ask about ambiguous stations and avoid inventing delays or cancellations.
+Notice associations are not proof of a delay or its cause, and the returned
+departure sample is not an exhaustive network disruption report.
+
+Credentials remain server-side and are never included in tool definitions or
+results. Raw backend/SDK exception messages are not returned to the model. The
+agent writes no transcripts or credential logs. Responses use `store=False`;
+the transcript and searched stop IDs exist only for the current invocation, with
+no conversation memory between questions. The existing PTV/matching logic is
+unchanged.
+
+Run the agent tests or full offline suite:
+
+```powershell
+uv run pytest -q tests/test_agent_tools.py tests/test_agent.py tests/test_ask_hopwise.py
+uv run pytest -q
+```
+
+Tests script fake model responses and mock the PTV HTTP boundary. They verify
+schema validation, identifier provenance, service reuse, `call_id` correlation,
+history preservation, unavailable data, loop limits and credential-safe errors.
+An additional fake-HTTP test exercises serialization through the installed
+OpenAI SDK without calling OpenAI. These tests validate the implementation;
+they do not establish a real model's answer quality or station-selection accuracy.
+
+## Streamlit AI Assistant
+
+The existing station search, departure table and disruption expanders remain
+available. Below them, **Hopwise AI Assistant** accepts a natural-language question
+and displays the agent's final answer. Configure `OPENAI_API_KEY` and `OPENAI_MODEL`
+in the root `.env`, alongside the existing PTV credentials, then run:
+
+```powershell
+uv run streamlit run streamlit_app.py
+```
+
+Try: "What are the next trains from Richmond, and are there any disruptions?"
+Submitting a chat question makes live OpenAI/PTV requests. Opening the app alone
+does not create an OpenAI client or require OpenAI configuration, so the manual
+station/departure interface can still be used independently.
+
+The chat follows this flow:
+
+```text
+Chat question -> agent.answer_question_from_env() -> answer_question()
+              -> existing tool adapters -> existing PTV services/models
+              -> final answer -> chat display and session state
+```
+
+`answer_question_from_env()` loads local configuration, opens the OpenAI client
+and calls the existing orchestration loop. The terminal script uses the same
+entry point. Streamlit manages rendering and widget/session state; it does not
+define tools, execute a tool-calling loop or duplicate API logic.
+
+`st.session_state.chat_messages` stores user and assistant messages for the
+current browser session. Streamlit redraws those messages on each rerun and
+calls the agent only for a newly submitted question. Station searches and
+departure refreshes preserve the chat without repeating the agent request.
+The history is for display: each question is an independent agent run, so ask
+a complete question rather than relying on an earlier chat message or the
+manually selected station. Messages are not saved to disk or shared between
+browser sessions.
+
+A spinner remains visible while the agent and its tools execute. Configuration,
+LLM and propagated PTV failures show a fixed friendly message instead of raw
+exception diagnostics. PTV failures already converted to controlled tool results
+are described by the agent in its answer. Credentials stay server-side and are
+not placed in chat state or tool results. No developer/debug view is added in
+this increment.
+
+Run the focused offline UI tests:
+
+```powershell
+uv run pytest -q tests/test_streamlit_assistant.py
+```
+
+These `AppTest` tests mock the agent entry point and PTV services. They cover
+message persistence, independent questions and sessions, progress indication,
+safe error recovery, and coexistence with station selection and departure
+refreshes, without making real OpenAI or PTV requests.
+
+## Inspecting the agent orchestration tests
+
+Run the focused orchestration tests with scripted LLM responses and mocked PTV
+service functions:
+
+```powershell
+uv run pytest -v tests/test_agent.py
+```
+
+To inspect the successful search -> departures -> final-answer sequence, disable
+pytest's output capture for that test:
+
+```powershell
+uv run pytest -v -s tests/test_agent.py::test_complete_loop_preserves_output_items_and_call_ids
+```
+
+The printed trace shows the two requested tool names, their JSON arguments and
+call IDs, followed by the correlated result statuses. The test uses synthetic
+station IDs: it verifies that the returned Richmond ID `4321` is passed to the
+departure service, and that search executes before departure retrieval.
+
+`ScriptedClient.tool_calls` records model-requested calls. `client.requests`
+captures each complete Responses API request, including the accumulated input
+history. `tool_outputs(client.requests[-1])` exposes the results returned to the
+model; apply `json.loads(item["output"])` to inspect the full payload. PTV mocks'
+`mock_calls` record actual Python service executions, which remain empty for
+rejected calls. Requested calls and executed calls differ in rejection tests.
+
+The cases cover unknown tools, malformed and invalid arguments, correcting an
+invalid limit before executing a departure query, controlled errors at both PTV
+stages and the model boundary, the five-round limit, and final answers that
+require no tool execution. A final clarification can complete after one model
+response without contacting PTV. All model outputs in these tests are scripted;
+no OpenAI/PTV credentials or live calls are needed. The existing SDK compatibility
+test in the same file also uses a fake HTTP transport.
+
+References: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
+and [OpenAI Python SDK](https://github.com/openai/openai-python).
