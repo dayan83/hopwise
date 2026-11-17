@@ -118,17 +118,27 @@ def get_departures(stop_id: int, route_type: int = 0, max_results: int = 5, *,
 def get_departures_response(stop_id: int, route_type: int = 0, max_results: int = 5, *,
                             config: PTVConfig | None = None,
                             transport: httpx.BaseTransport | None = None) -> DeparturesResponse:
-    """Preserve departure identifiers and expanded notices from one API request."""
+    """Preserve departures, service names and expanded notices from one request."""
     payload = _get_departures_payload(stop_id, route_type, max_results, config=config,
-                                      transport=transport, expand_disruptions=True)
+                                      transport=transport, expand_departure_details=True)
+    routes = _expanded_lookup(payload.get("routes"), "route_id")
+    runs = _expanded_lookup(payload.get("runs"), "run_ref")
     expanded = payload.get("disruptions")
     if expanded is None:
         expanded = {}
     if not isinstance(expanded, dict):
         raise PTVRequestError("PTV returned invalid expanded disruptions")
     try:
-        departures = [Departure.model_validate(record)
-                      for record in payload["departures"][:max_results]]
+        departures = []
+        for record in payload["departures"][:max_results]:
+            data = dict(record)
+            route = routes.get(str(data.get("route_id")), {})
+            run = runs.get(str(data.get("run_ref")), {})
+            if data.get("route_name") is None:
+                data["route_name"] = route.get("route_name")
+            if data.get("destination_name") is None:
+                data["destination_name"] = run.get("destination_name")
+            departures.append(Departure.model_validate(data))
         notices = []
         for key, record in expanded.items():
             # Null/empty placeholders contain no details; let the service resolve the ID.
@@ -152,18 +162,35 @@ def get_departures_response(stop_id: int, route_type: int = 0, max_results: int 
     raise PTVRequestError("PTV returned invalid structured departure data")
 
 
+def _expanded_lookup(records, identifier: str) -> dict[str, dict]:
+    if records is None:
+        return {}
+    if not isinstance(records, dict):
+        raise PTVRequestError("PTV returned invalid expanded route or run details")
+    lookup = {}
+    for key, record in records.items():
+        if record is None:
+            continue
+        if not isinstance(record, dict):
+            raise PTVRequestError("PTV returned invalid expanded route or run details")
+        record_id = record.get(identifier)
+        lookup[str(record_id if record_id is not None else key)] = record
+    return lookup
+
+
 def _get_departures_payload(stop_id: int, route_type: int, max_results: int, *,
                             config: PTVConfig | None = None,
                             transport: httpx.BaseTransport | None = None,
-                            expand_disruptions: bool = False) -> dict:
+                            expand_departure_details: bool = False) -> dict:
     for name, value, minimum in (("stop_id", stop_id, 1),
                                  ("route_type", route_type, 0),
                                  ("max_results", max_results, 1)):
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise ValueError(f"{name} must be an integer >= {minimum}")
-    params = {"max_results": str(max_results)}
-    if expand_disruptions:
-        params["expand"] = "5"  # PTV V3 expansion enum: Disruption.
+    params: dict[str, str | list[str]] = {"max_results": str(max_results)}
+    if expand_departure_details:
+        # PTV's repeatable expansion parameter: Disruption, Route, Run.
+        params["expand"] = ["5", "2", "3"]
     payload = _get_json(
         f"/v3/departures/route_type/{route_type}/stop/{stop_id}", config,
         params=params, transport=transport,
@@ -265,7 +292,7 @@ def _parse_disruption_datetime(value) -> datetime | None:
 
 
 def _get_json(path: str, config: PTVConfig | None = None, *,
-              params: dict[str, str] | None = None,
+              params: dict[str, str | list[str]] | None = None,
               transport: httpx.BaseTransport | None = None) -> dict:
     config = config or PTVConfig.from_env()
     # httpx logs full URLs at INFO; httpcore debug logs may include request data.

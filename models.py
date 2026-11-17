@@ -33,7 +33,9 @@ class APIModel(BaseModel):
 class Departure(APIModel):
     stop_id: Identifier | None = None
     route_id: Identifier | None = None
+    route_name: str | None = None
     run_ref: str | None = None
+    destination_name: str | None = None
     direction_id: Identifier | None = None
     scheduled_departure_utc: OptionalTimestamp = None
     estimated_departure_utc: OptionalTimestamp = None

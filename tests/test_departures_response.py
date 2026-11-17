@@ -75,3 +75,32 @@ def test_model_validation_errors_are_sanitized(config, caplog):
     output = "".join(traceback.format_exception(caught.value)) + caplog.text
     for secret in (config.dev_id, config.api_key, "signature="):
         assert secret not in output
+
+
+def test_route_and_destination_names_reused_from_same_response(config):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.url.params.get_list("expand") == ["5", "2", "3"]
+        return httpx.Response(200, json={
+            "departures": [{"route_id": 9, "run_ref": "run-A"}, {"route_id": 10, "run_ref": "run-B"}],
+            "routes": {"9": {"route_name": "Glen Waverley"}},
+            # Resolve via run_ref even when the lookup key is an older numeric identifier.
+            "runs": {"123": {"run_ref": "run-A", "destination_name": "Flinders Street"}},
+        })
+
+    result = get_departures_response(1, config=config, transport=httpx.MockTransport(handler))
+    assert len(calls) == 1
+    assert result.departures[0].route_name == "Glen Waverley"
+    assert result.departures[0].destination_name == "Flinders Street"
+    assert result.departures[1].route_name is None
+    assert result.departures[1].destination_name is None
+
+
+@pytest.mark.parametrize("field,value", [("routes", []), ("runs", "invalid"), ("runs", {"A": []})])
+def test_invalid_expanded_service_details_are_safe_errors(config, field, value):
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, json={"departures": [], field: value}))
+    with pytest.raises(PTVRequestError, match="expanded route or run details"):
+        get_departures_response(1, config=config, transport=transport)

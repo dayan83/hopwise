@@ -1,10 +1,23 @@
 """Associate departures with notices using PTV's explicit disruption IDs."""
 
+from datetime import timedelta
+
 import httpx
 from pydantic import ValidationError
 
-from models import DepartureBoard, DepartureWithDisruptions, Disruption
+from models import Departure, DepartureBoard, DepartureWithDisruptions, Disruption
 from ptv import PTVConfig, PTVRequestError, get_departures_response, get_disruptions_for_route
+
+
+def departure_delay(departure: Departure) -> timedelta | None:
+    """Signed estimate minus schedule; None means no valid comparison exists.
+
+    Zero requires an estimate equal to the schedule; a negative value is early.
+    Models validate and normalize both timestamps to aware UTC datetimes.
+    """
+    if departure.estimated_departure_utc is None or departure.scheduled_departure_utc is None:
+        return None
+    return departure.estimated_departure_utc - departure.scheduled_departure_utc
 
 
 def get_departures_with_disruptions(stop_id: int, max_results: int = 5, *,

@@ -215,8 +215,9 @@ The separation of responsibilities is:
 | `departure_board.py` | Station selection and console presentation |
 
 The API client exposes `get_departures_response()` for the richer data. It calls
-the same departures endpoint with `expand=5` (PTV's Disruption expansion enum),
-preserving the optional expanded `disruptions` dictionary alongside the departures.
+the same departures endpoint with repeated `expand` values: `5` (Disruption),
+`2` (Route), and `3` (Run). It preserves expanded disruption details and resolves
+route names and run destinations from the same response, without extra requests.
 This response shape was verified against PTV's public Swagger schema; expansion
 can still be absent, null, or incomplete and is handled accordingly.
 The existing `get_departures()` and route-disruption functions keep their current
@@ -227,7 +228,7 @@ The new models are:
 
 | Model | Contents |
 | --- | --- |
-| `Departure` | `stop_id`, `route_id`, `run_ref`, `direction_id`, scheduled/estimated UTC times, platform and `disruption_ids` |
+| `Departure` | `stop_id`, `route_id`, `route_name`, `run_ref`, `destination_name`, `direction_id`, scheduled/estimated UTC times, platform and `disruption_ids` |
 | `Disruption` | Existing notice fields, dates, affected routes/stops and PTV source groups |
 | `DeparturesResponse` | Typed departures and expanded notices from the same request |
 | `DepartureWithDisruptions` | One departure, its ID-matched notices and unresolved IDs |
@@ -290,7 +291,7 @@ deduplication, unlinked route notices, unresolved details, missing association
 data/estimates, timezone-aware models, and API failures. The original tests
 continue to run unchanged.
 
-## Streamlit station search
+## Streamlit station search and departures
 
 Install the updated dependencies, then start the local interface:
 
@@ -303,7 +304,9 @@ Open the local URL printed by Streamlit (normally `http://localhost:8501`).
 The app uses the same root `.env` configuration as the console scripts. Enter
 a station name, click Search, and choose a match by station name, suburb and
 stop ID. An empty selector requires an explicit choice, even for one match.
-This first interface increment supports station search and selection only.
+Selecting a station loads its next five returned departures. The table shows
+scheduled and estimated times, route, destination, platform and estimate-based
+timing. Click **Refresh departures** to request the latest data for that station.
 
 `streamlit_app.py` contains the presentation and widget state. On form submission,
 it calls the existing `ptv.search_stations()` function. That function loads
@@ -322,7 +325,8 @@ the search results and selected stop ID for that browser session across reruns:
 - `search_complete`: distinguishes a successful empty search from an initial page or error.
 
 Each submitted search clears the earlier results and selection. Choosing a
-station updates `selected_stop_id` without another API request. The state is
+station updates `selected_stop_id` and loads departures without repeating the
+station search. The state is
 temporary and session-specific; it is not saved to disk or shared between users,
 and a browser reload starts a new session. Credentials stay in the existing
 server-side configuration and are not stored in UI state.
@@ -337,3 +341,55 @@ uv run pytest -q
 The UI tests use Streamlit's `AppTest` with mocked search results/HTTP responses.
 They cover selection persistence, separate sessions, clearing stale results,
 empty searches, no matches, validation/configuration errors and API failures.
+
+The departure display follows this flow:
+
+```text
+Selected stop ID -> get_departures_response() -> authenticated PTV request
+                -> typed Departure records -> Melbourne-time table
+```
+
+The client resolves `route_name` from expanded routes using `route_id`, and
+`destination_name` from expanded runs using `run_ref`. Missing names remain `None`;
+the UI shows a route ID where available and "Not provided" for missing destination
+or platform data. It does not guess a destination from a route or direction name.
+
+Pydantic validates timestamp inputs and normalizes them to aware UTC datetimes.
+The UI converts these values to `Australia/Melbourne` only when formatting them,
+including dates and AEST/AEDT labels. It does not change the stored UTC values.
+
+`departure_service.departure_delay()` returns the signed difference between a
+valid estimate and scheduled time. It returns `None` if either is missing.
+The UI formats that comparison as late, early or "On time (estimated)". Exact
+equality is required for on-time wording. Short differences are displayed in
+seconds so a small delay is not rounded into "on time". A missing estimate is
+shown explicitly as "No estimate available", never as zero delay. These values
+describe PTV's estimate relative to the schedule, not a confirmed impact or cause.
+
+The latest typed response, its selected stop ID, the successful-refresh timestamp
+and any retrieval error are held in session state. Departures load once when a
+station is selected and again on an explicit refresh; ordinary reruns reuse the
+stored response. No automatic polling or global cache is used. The "Last
+refreshed" timestamp records successful retrieval completion and is shown in
+Melbourne local time, including for valid empty responses.
+
+A new search or station selection clears the previous station's departure data.
+If a refresh fails for the same station, the earlier result and its timestamp
+remain visible with an error and a warning. An initial failure can be retried
+using Refresh departures without automatically retrying on every rerun.
+
+API/authentication and response parsing stay in `ptv.py`; timestamp validation
+stays in `models.py`; delay calculation stays in `departure_service.py`; widgets,
+refresh state and display formatting stay in `streamlit_app.py`. This page does
+not request route-disruption fallbacks or display disruption notices.
+
+Run the relevant tests or the full offline suite:
+
+```powershell
+uv run pytest -q tests/test_departure_delay.py tests/test_departures_response.py tests/test_streamlit_app.py tests/test_streamlit_departures.py
+uv run pytest -q
+```
+
+Tests cover route/run expansion, missing estimates versus on-time estimates,
+early/late departures, daylight saving, refreshing, failed refreshes, switching
+stations, empty results, and the client/model/UI flow using mocked responses.

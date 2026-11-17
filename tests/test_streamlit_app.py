@@ -6,6 +6,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import ptv
+from models import DeparturesResponse
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -13,6 +14,13 @@ STATIONS = [
     {"stop_id": 1, "stop_name": "Richmond", "stop_suburb": "Richmond", "route_type": 0},
     {"stop_id": 2, "stop_name": "East Richmond", "stop_suburb": "Cremorne", "route_type": 0},
 ]
+
+
+@pytest.fixture(autouse=True)
+def departures(monkeypatch):
+    fetch = Mock(return_value=DeparturesResponse())
+    monkeypatch.setattr(ptv, "get_departures_response", fetch)
+    return fetch
 
 
 @pytest.fixture
