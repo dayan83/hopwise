@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -41,7 +42,9 @@ def test_terminal_question_uses_env_configuration_without_printing_it(monkeypatc
     ask_hopwise.main()
     factory.assert_called_once_with(timeout=30.0, max_retries=0)
     answer.assert_called_once_with("What are the next trains from Richmond?", client=client, model="test-model")
-    assert capsys.readouterr().out == "Retrieved train information.\n"
+    output = capsys.readouterr()
+    assert output.out == "Retrieved train information.\n"
+    assert output.err == ""
 
 
 def test_agent_failure_is_a_clean_terminal_error(monkeypatch):
@@ -50,3 +53,48 @@ def test_agent_failure_is_a_clean_terminal_error(monkeypatch):
     monkeypatch.setattr(ask_hopwise, "answer_question_from_env", Mock(side_effect=AgentError("OpenAI request failed")))
     with pytest.raises(SystemExit, match="OpenAI request failed"):
         ask_hopwise.main()
+
+
+def test_trace_flag_prints_json_separately_from_the_answer(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["ask_hopwise.py", "--trace", "Next Richmond trains?"])
+
+    def answer(question, *, trace):
+        trace.reset()
+        trace.record_tool("search_stations", "call-1", {"query": "Richmond"},
+                          {"ok": True, "stations": []})
+        trace.status = "completed"
+        return "Retrieved train information."
+
+    run = Mock(side_effect=answer)
+    monkeypatch.setattr(ask_hopwise, "answer_question_from_env", run)
+    ask_hopwise.main()
+    output = capsys.readouterr()
+    assert output.out == "Retrieved train information.\n"
+    captured = json.loads(output.err)
+    assert captured["status"] == "completed"
+    assert captured["tool_calls"][0]["call_id"] == "call-1"
+    assert run.call_args.args == ("Next Richmond trains?",)
+
+
+def test_environment_entry_point_forwards_trace(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "private-test-key")
+    monkeypatch.setenv("OPENAI_MODEL", "test-model")
+    factory = MagicMock()
+    run = Mock(return_value="Answer.")
+    monkeypatch.setattr(agent, "OpenAI", factory)
+    monkeypatch.setattr(agent, "answer_question", run)
+    trace = agent.AgentTrace()
+    assert agent.answer_question_from_env("Richmond?", trace=trace) == "Answer."
+    run.assert_called_once_with("Richmond?", client=factory.return_value.__enter__.return_value,
+                                model="test-model", trace=trace)
+
+
+def test_trace_is_printed_for_missing_configuration_without_creating_client(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["ask_hopwise.py", "--trace"])
+    factory = Mock()
+    monkeypatch.setattr(agent, "OpenAI", factory)
+    with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
+        ask_hopwise.main()
+    captured = json.loads(capsys.readouterr().err)
+    assert captured == {"status": "failed", "error_code": "missing_configuration", "tool_calls": []}
+    factory.assert_not_called()

@@ -57,6 +57,61 @@ def test_adapters_reuse_services_and_serialize_board(context, monkeypatch):
     assert context.config.dev_id not in serialized
 
 
+@pytest.mark.parametrize("scheduled,estimated,seconds,status,description", [
+    ("2026-11-17T22:58:00Z", "2026-11-17T22:58:30Z", 30, "late",
+     "Estimated 30 seconds late relative to the schedule."),
+    ("2026-11-17T22:58:00Z", "2026-11-17T22:57:30Z", -30, "early",
+     "Estimated 30 seconds early relative to the schedule."),
+    ("2026-11-17T22:58:00Z", "2026-11-17T22:58:00Z", 0, "matches_schedule",
+     "The estimate matches the schedule; this is not a guarantee of on-time operation."),
+    ("2026-11-17T22:58:00Z", None, None, "unknown",
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
+    (None, "2026-11-17T22:58:30Z", None, "unknown",
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
+])
+def test_departure_tool_supplies_timing_interpretation_without_changing_timestamps(
+        context, monkeypatch, scheduled, estimated, seconds, status, description):
+    context.known_stop_ids.add(1)
+    board = DepartureBoard(stop_id=1, departures=[DepartureWithDisruptions(departure=Departure(
+        stop_id=1, scheduled_departure_utc=scheduled, estimated_departure_utc=estimated))])
+    original = board.model_dump(mode="json")
+    fetch = Mock(return_value=board)
+    monkeypatch.setattr(departure_service, "get_departures_with_disruptions", fetch)
+    result = execute_tool("get_departures_with_disruptions", '{"stop_id":1,"limit":5}', context)
+    departure = result["board"]["departures"][0]["departure"]
+    assert result["ok"] is True
+    assert departure["scheduled_departure_utc"] == scheduled
+    assert departure["estimated_departure_utc"] == estimated
+    assert departure["delay_seconds"] == seconds
+    assert departure["delay_status"] == status
+    assert departure["delay_description"] == description
+    assert board.model_dump(mode="json") == original
+    fetch.assert_called_once_with(1, max_results=5, config=context.config, transport=None)
+
+
+@pytest.mark.parametrize("estimated,description", [
+    ("2026-11-17T22:57:30Z",
+     "Estimated departure: 2026-11-18 09:57:30 AEDT; scheduled departure: unavailable."),
+    (None, "Scheduled departure: unavailable; real-time estimate unavailable."),
+])
+def test_time_description_handles_missing_schedule_without_inventing_times(
+        context, monkeypatch, estimated, description):
+    context.known_stop_ids.add(1)
+    board = DepartureBoard(stop_id=1, departures=[DepartureWithDisruptions(departure=Departure(
+        stop_id=1, scheduled_departure_utc=None, estimated_departure_utc=estimated))])
+    original = board.model_dump(mode="json")
+    monkeypatch.setattr(departure_service, "get_departures_with_disruptions", Mock(return_value=board))
+    result = execute_tool("get_departures_with_disruptions", '{"stop_id":1,"limit":5}', context)
+    assert result["ok"] is True
+    departure = result["board"]["departures"][0]["departure"]
+    assert departure["departure_time_description"] == description
+    assert departure["scheduled_departure_utc"] is None
+    assert departure["estimated_departure_utc"] == estimated
+    assert departure["delay_seconds"] is None
+    assert departure["delay_status"] == "unknown"
+    assert board.model_dump(mode="json") == original
+
+
 @pytest.mark.parametrize("arguments", [
     "not JSON", "[]", '{"query":"Ri"}', '{"query":"1234"}', '{"query":1}',
     '{"query":"Richmond","extra":"ignored?"}',

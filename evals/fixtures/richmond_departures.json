@@ -1,0 +1,56 @@
+{
+  "scenario_id": "richmond_departures",
+  "synthetic": true,
+  "as_of_utc": "2026-11-17T22:55:00Z",
+  "responses": [
+    {
+      "request": {
+        "method": "GET", "path": "/v3/search/Richmond",
+        "query": {"route_types": "0", "include_outlets": "false", "match_stop_by_suburb": "false", "match_route_by_suburb": "false"}
+      },
+      "response": {
+        "status_code": 200,
+        "body": {"stops": [{"stop_id": 1101, "stop_name": "Richmond", "stop_suburb": "Richmond", "route_type": 0}]}
+      }
+    },
+    {
+      "request": {
+        "method": "GET", "path": "/v3/departures/route_type/0/stop/1101",
+        "query": {"max_results": "5", "expand": ["5", "2", "3"]}
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "departures": [
+            {
+              "stop_id": 1101, "route_id": 2101, "run_ref": "310001", "direction_id": 4101,
+              "scheduled_departure_utc": "2026-11-17T22:58:00Z", "estimated_departure_utc": "2026-11-17T22:58:00Z",
+              "platform_number": "9", "disruption_ids": []
+            },
+            {
+              "stop_id": 1101, "route_id": 2102, "run_ref": "310002", "direction_id": 4102,
+              "scheduled_departure_utc": "2026-11-17T23:02:00Z", "estimated_departure_utc": "2026-11-17T23:02:00Z",
+              "platform_number": "10", "disruption_ids": []
+            },
+            {
+              "stop_id": 1101, "route_id": 2103, "run_ref": "310003", "direction_id": 4103,
+              "scheduled_departure_utc": "2026-11-17T23:06:00Z", "estimated_departure_utc": "2026-11-17T23:06:00Z",
+              "platform_number": "10", "disruption_ids": []
+            }
+          ],
+          "routes": {
+            "2101": {"route_id": 2101, "route_name": "Glen Waverley", "route_type": 0},
+            "2102": {"route_id": 2102, "route_name": "Belgrave", "route_type": 0},
+            "2103": {"route_id": 2103, "route_name": "Lilydale", "route_type": 0}
+          },
+          "runs": {
+            "310001": {"run_ref": "310001", "route_id": 2101, "route_type": 0, "direction_id": 4101, "destination_name": "Glen Waverley"},
+            "310002": {"run_ref": "310002", "route_id": 2102, "route_type": 0, "direction_id": 4102, "destination_name": "Belgrave"},
+            "310003": {"run_ref": "310003", "route_id": 2103, "route_type": 0, "direction_id": 4103, "destination_name": "Lilydale"}
+          },
+          "disruptions": {}
+        }
+      }
+    }
+  ]
+}

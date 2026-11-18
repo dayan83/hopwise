@@ -1,14 +1,19 @@
 from copy import deepcopy
 import json
+from pathlib import Path
+import socket
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import httpx
 import httpx2
 from openai import APIError, OpenAI
 import pytest
 
 from agent import AgentError, MAX_TOOL_ROUNDS, answer_question
+from agent_trace import AgentTrace
 import departure_service
+from evals.fixture_transport import FixtureTransport
 from models import Departure, DepartureBoard, DepartureWithDisruptions
 import ptv
 
@@ -104,6 +109,52 @@ def test_complete_loop_preserves_output_items_and_call_ids(search, monkeypatch):
         "returned_results": [{"call_id": item["call_id"], "ok": json.loads(item["output"])["ok"]}
                              for item in tool_outputs(client.requests[-1])],
     }, indent=2))
+
+
+@pytest.mark.parametrize("case_id,time_description", [
+    ("glen_waverley_no_estimate",
+     "Scheduled departure: 2026-11-18 10:05:00 AEDT; real-time estimate unavailable."),
+    ("richmond_30_seconds_early",
+     "Estimated departure: 2026-11-18 09:57:30 AEDT; scheduled departure: 2026-11-18 09:58:00 AEDT."),
+])
+def test_timing_presentation_contract_reaches_model_and_trace_from_baseline_fixtures(
+        monkeypatch, case_id, time_description):
+    """Check data and instructions sent to a scripted LLM, not generated prose."""
+    def forbidden(*args, **kwargs):
+        pytest.fail("Timing regressions must use fixtures without network or real credentials")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(ptv.PTVConfig, "from_env", forbidden)
+    evals = Path(__file__).resolve().parents[1] / "evals"
+    cases = json.loads((evals / "dataset.json").read_text(encoding="utf-8"))["cases"]
+    case = next(case for case in cases if case["case_id"] == case_id)
+    fixture = FixtureTransport.from_file(evals / case["fixture"])
+    client = ScriptedClient([
+        *(tool_response(call["name"], json.dumps(call["arguments"]), f"call-{index}")
+          for index, call in enumerate(case["expected_calls"])),
+        final_response("Captured offline tool output."),
+    ])
+    trace = AgentTrace()
+    with fixture.reference_time():
+        answer_question(case["question"], client=client, model="test",
+                        ptv_config=fixture.config, ptv_transport=fixture, trace=trace)
+    sent = json.loads(tool_outputs(client.requests[-1])[-1]["output"])
+    departure = sent["board"]["departures"][0]["departure"]
+    assert departure["departure_time_description"] == time_description
+    golden = case["expected_facts"]["departures"][0]
+    for key in ("scheduled_departure_utc", "estimated_departure_utc", "scheduled_local",
+                "estimated_local", "delay_seconds", "delay_status", "delay_description"):
+        assert departure[key] == golden[key]
+    assert trace.tool_calls[-1]["result"]["board"]["departures"][0]["departure"] == departure
+    for request in client.requests:
+        assert "Use departure_time_description" in request["instructions"]
+        assert "keep the labelled schedule as reference" in request["instructions"]
+        assert "real-time estimate is unavailable" in request["instructions"]
+        assert "Never substitute a scheduled time" in request["instructions"]
+    fixture.assert_all_used()
+    assert fixture.miss_count == 0
 
 
 @pytest.mark.parametrize("response,code", [

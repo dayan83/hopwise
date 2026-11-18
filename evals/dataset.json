@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "dataset_version": "0.2.0",
+  "description": "Nine manually authored Hopwise evaluation cases with realistic, entirely synthetic PTV snapshots.",
+  "timezone": "Australia/Melbourne",
+  "notes": [
+    "All identifiers, services, platforms and notices are synthetic and must never be treated as live PTV information.",
+    "Expected facts and labels were authored using record inspection and manual arithmetic, independently of Hopwise calculation functions.",
+    "All local timestamps in these scenarios use AEDT, UTC+11.",
+    "Fixture paths are relative to the directory containing this dataset.",
+    "Fixture responses pair request method, path and application query parameters with an HTTP status and a PTV JSON body. Query values are strings; repeated expand values are arrays. Authentication parameters are intentionally absent.",
+    "Each as_of_utc is the fixed scenario reference time. A future runner must use it for retrieved_at_utc instead of the wall clock.",
+    "These are deliberately short response snapshots. max_results is an upper bound, not a promise that five records will be returned.",
+    "Required response notes and prohibited claims are semantic review expectations, not exact answer strings or executable scoring rules."
+  ],
+  "cases": [
+    {
+      "case_id": "richmond_departures",
+      "question": "What are the next trains from Richmond?",
+      "fixture": "fixtures/richmond_departures.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Richmond"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1101, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1101,
+        "departure_count": 3,
+        "departures": [
+          {
+            "run_ref": "310001", "stop_id": 1101, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Glen Waverley", "platform_number": "9",
+            "scheduled_departure_utc": "2026-11-17T22:58:00Z", "estimated_departure_utc": "2026-11-17T22:58:00Z",
+            "scheduled_local": "2026-11-18 09:58:00 AEDT", "estimated_local": "2026-11-18 09:58:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          },
+          {
+            "run_ref": "310002", "stop_id": 1101, "route_id": 2102,
+            "route_name": "Belgrave", "destination_name": "Belgrave", "platform_number": "10",
+            "scheduled_departure_utc": "2026-11-17T23:02:00Z", "estimated_departure_utc": "2026-11-17T23:02:00Z",
+            "scheduled_local": "2026-11-18 10:02:00 AEDT", "estimated_local": "2026-11-18 10:02:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          },
+          {
+            "run_ref": "310003", "stop_id": 1101, "route_id": 2103,
+            "route_name": "Lilydale", "destination_name": "Lilydale", "platform_number": "10",
+            "scheduled_departure_utc": "2026-11-17T23:06:00Z", "estimated_departure_utc": "2026-11-17T23:06:00Z",
+            "scheduled_local": "2026-11-18 10:06:00 AEDT", "estimated_local": "2026-11-18 10:06:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          }
+        ],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": []
+      },
+      "required_response_notes": [
+        "Report the three returned services with the correct destination, time and platform pairing.",
+        "Describe equal estimates and schedules as matching estimates, without guaranteeing on-time operation.",
+        "If discussing disruptions, limit the statement to no linked notices listed for these returned services."
+      ],
+      "prohibited_claims": [
+        "Five departures were returned, or additional unreturned services are known.",
+        "The returned trains are guaranteed to depart on time.",
+        "There are no disruptions anywhere on these lines or the network."
+      ],
+      "verification_notes": [
+        "The search record identifies Richmond as stop 1101. Each departure uses stop 1101 and resolves through its own route_id and run_ref.",
+        "Adding 11 hours to 22:58, 23:02 and 23:06 UTC gives 09:58, 10:02 and 10:06 AEDT on 18 November.",
+        "Each estimate is identical to its schedule, so each signed difference is zero. All disruption ID lists are explicitly empty."
+      ]
+    },
+    {
+      "case_id": "unknown_station_xyzabc",
+      "question": "What are the next trains from a station called XYZABC?",
+      "fixture": "fixtures/unknown_station_xyzabc.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "XYZABC"}}
+      ],
+      "prohibited_calls": ["get_departures_with_disruptions"],
+      "expected_facts": {
+        "station_match_count": 0,
+        "selected_stop_id": null,
+        "departure_data_retrieved": false,
+        "outcome": "station_not_found"
+      },
+      "required_response_notes": [
+        "Say the station search returned no matches and ask for a corrected name or spelling."
+      ],
+      "prohibited_claims": [
+        "XYZABC has a known stop ID, platform, destination or departure time.",
+        "Richmond or another station was selected as a substitute without clarification.",
+        "The search proves that XYZABC has no train services, or that no such station can exist."
+      ],
+      "verification_notes": [
+        "The only response body contains stops: []. No stop ID can be resolved, and no departures response is supplied.",
+        "No search matches is different from successfully fetching an empty departure board."
+      ]
+    },
+    {
+      "case_id": "richmond_30_seconds_late",
+      "question": "What are the next trains from Richmond, including any estimated delays?",
+      "fixture": "fixtures/richmond_30_seconds_late.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Richmond"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1101, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1101,
+        "departure_count": 1,
+        "departures": [
+          {
+            "run_ref": "310004", "stop_id": 1101, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Glen Waverley", "platform_number": "9",
+            "scheduled_departure_utc": "2026-11-17T22:58:00Z", "estimated_departure_utc": "2026-11-17T22:58:30Z",
+            "scheduled_local": "2026-11-18 09:58:00 AEDT", "estimated_local": "2026-11-18 09:58:30 AEDT",
+            "delay_seconds": 30, "delay_status": "late",
+            "delay_description": "Estimated 30 seconds late relative to the schedule.",
+            "disruption_ids": []
+          }
+        ],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": []
+      },
+      "required_response_notes": [
+        "Clearly distinguish the 09:58:00 schedule from the 09:58:30 estimate and describe the comparison as estimated late."
+      ],
+      "prohibited_claims": [
+        "The train is 30 seconds early.",
+        "The estimate matches the schedule, or the train is guaranteed on time.",
+        "The train has actually departed at 09:58:30.",
+        "A disruption caused the 30-second difference."
+      ],
+      "verification_notes": [
+        "22:58:30 minus 22:58:00 UTC is positive 30 seconds, so the estimate is later than the schedule.",
+        "UTC+11 converts the two instants to 09:58:00 and 09:58:30 AEDT on 18 November. Both remain future instants relative to the fixed 09:55 reference time.",
+        "The disruption ID list is empty; no cause for the difference is supplied."
+      ]
+    },
+    {
+      "case_id": "glen_waverley_no_estimate",
+      "question": "What are the next trains from Glen Waverley?",
+      "fixture": "fixtures/glen_waverley_no_estimate.json",
+      "as_of_utc": "2026-11-17T23:00:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Glen Waverley"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1103, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1103,
+        "departure_count": 1,
+        "departures": [
+          {
+            "run_ref": "310005", "stop_id": 1103, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Flinders Street", "platform_number": "1",
+            "scheduled_departure_utc": "2026-11-17T23:05:00Z", "estimated_departure_utc": null,
+            "scheduled_local": "2026-11-18 10:05:00 AEDT", "estimated_local": null,
+            "delay_seconds": null, "delay_status": "unknown",
+            "delay_description": "Timing comparison unavailable: a scheduled time or real-time estimate is missing.",
+            "disruption_ids": []
+          }
+        ],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": []
+      },
+      "required_response_notes": [
+        "Report 10:05 AEDT as scheduled, with the real-time estimate and timing comparison unavailable."
+      ],
+      "prohibited_claims": [
+        "10:05 AEDT is a real-time estimated departure.",
+        "The delay is zero, the estimate matches the schedule, or the train is on time.",
+        "The missing estimate proves the train is early, delayed or cancelled."
+      ],
+      "verification_notes": [
+        "23:05 UTC plus 11 hours is 10:05 AEDT on 18 November, five minutes after the fixed reference time.",
+        "estimated_departure_utc is explicitly null. A signed difference cannot be computed without it, so delay_seconds remains null and delay_status is unknown.",
+        "The expanded run identifies Flinders Street as the destination; the route name remains Glen Waverley."
+      ]
+    },
+    {
+      "case_id": "flinders_street_morning_late_night_notice",
+      "question": "Are any disruption notices linked to the next trains from Flinders Street?",
+      "fixture": "fixtures/flinders_street_morning_late_night_notice.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Flinders Street"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1102, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1102,
+        "departure_count": 1,
+        "departures": [
+          {
+            "run_ref": "310006", "stop_id": 1102, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Glen Waverley", "platform_number": "3",
+            "scheduled_departure_utc": "2026-11-17T23:00:00Z", "estimated_departure_utc": "2026-11-17T23:00:00Z",
+            "scheduled_local": "2026-11-18 10:00:00 AEDT", "estimated_local": "2026-11-18 10:00:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": [5101]
+          }
+        ],
+        "associated_notice_ids": [5101],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": [],
+        "notices": [
+          {
+            "disruption_id": 5101,
+            "associated_run_refs": ["310006"],
+            "disruption_status": "Planned",
+            "described_scope": "Late-night replacement buses between Richmond and Glen Waverley, 10 pm to 4 am on the nights of 18 and 19 November 2026.",
+            "from_date": "2026-11-17T13:00:00Z",
+            "to_date": "2026-11-20T13:00:00Z",
+            "relevance": {
+              "temporal_status": "within_window",
+              "temporal_unknown_reason": null,
+              "reference_departure_utc": "2026-11-17T23:00:00+00:00",
+              "reference_time_source": "estimated",
+              "location_status": "other_stops_listed",
+              "boarding_stop_id": 1102,
+              "affected_stop_ids": [1101, 1103]
+            },
+            "immediate_passenger_impact": "not_established"
+          }
+        ]
+      },
+      "required_response_notes": [
+        "Report that notice 5101 is directly associated with the returned service and preserve its Planned status.",
+        "Explain that the notice describes late-night buses; inclusion in its broad date envelope does not establish an effect on the 10 am departure.",
+        "Keep the association while stating that immediate morning impact is not established by the supplied structured data.",
+        "The listed affected stops are Richmond and Glen Waverley. Flinders Street is not explicitly listed, which does not prove the linked service is unaffected."
+      ],
+      "prohibited_claims": [
+        "The 10 am train is replaced by a bus, delayed or cancelled because of this notice.",
+        "The Planned notice is confirmed to be operating at 10 am because temporal_status is within_window.",
+        "The notice is merely unassociated context, or no notice is associated with this service.",
+        "The notice is irrelevant or the train is definitely unaffected because other stops are listed.",
+        "The matching estimate guarantees on-time operation."
+      ],
+      "verification_notes": [
+        "The departure explicitly lists disruption ID 5101 and the expanded disruptions map contains that exact ID, establishing the association.",
+        "23:00 UTC on 17 November is 10:00 AEDT on 18 November. It lies between 13:00 UTC on 17 November and 13:00 UTC on 20 November, so only broad date-envelope inclusion is established.",
+        "Affected stop IDs 1101 and 1103 differ from boarding stop 1102. The location label records other listed stops without removing the association.",
+        "Late-night operating hours occur only in the description. No recurring-window parser or structured morning impact is supplied; the correct expected outcome preserves this uncertainty."
+      ]
+    },
+    {
+      "case_id": "ambiguous_rich_station",
+      "question": "What are the next trains from Rich?",
+      "fixture": "fixtures/ambiguous_rich_station.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Rich"}}
+      ],
+      "prohibited_calls": ["get_departures_with_disruptions"],
+      "expected_facts": {
+        "station_match_count": 3,
+        "departure_data_retrieved": false,
+        "outcome": "clarification_required"
+      },
+      "required_response_notes": [
+        "Ask which station the user means before selecting a stop or requesting departures.",
+        "Present Richmond, East Richmond and West Richmond as the three possible matches."
+      ],
+      "prohibited_claims": [
+        "Rich uniquely identifies Richmond, East Richmond or West Richmond.",
+        "One station was selected without the user's clarification.",
+        "Departure times, platforms or destinations are known for the ambiguous request.",
+        "The search returned no matching stations."
+      ],
+      "verification_notes": [
+        "The query Rich is a nonnumeric four-character substring and passes the existing station-name validation.",
+        "The response contains Richmond (1101), East Richmond (1105) and West Richmond (1104). None has the exact name Rich, so there is no unique intended station.",
+        "Search result order is not permission to choose the first result. Only a search fixture is supplied; no departure request is expected."
+      ]
+    },
+    {
+      "case_id": "richmond_next_three",
+      "question": "What are the next three trains from Richmond?",
+      "fixture": "fixtures/richmond_next_three.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Richmond"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1101, "limit": 3}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1101,
+        "departure_count": 3,
+        "departures": [
+          {
+            "run_ref": "310007", "stop_id": 1101, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Glen Waverley", "platform_number": "9",
+            "scheduled_departure_utc": "2026-11-17T22:58:00Z", "estimated_departure_utc": "2026-11-17T22:58:00Z",
+            "scheduled_local": "2026-11-18 09:58:00 AEDT", "estimated_local": "2026-11-18 09:58:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          },
+          {
+            "run_ref": "310008", "stop_id": 1101, "route_id": 2102,
+            "route_name": "Belgrave", "destination_name": "Belgrave", "platform_number": "10",
+            "scheduled_departure_utc": "2026-11-17T23:02:00Z", "estimated_departure_utc": "2026-11-17T23:02:00Z",
+            "scheduled_local": "2026-11-18 10:02:00 AEDT", "estimated_local": "2026-11-18 10:02:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          },
+          {
+            "run_ref": "310009", "stop_id": 1101, "route_id": 2103,
+            "route_name": "Lilydale", "destination_name": "Lilydale", "platform_number": "10",
+            "scheduled_departure_utc": "2026-11-17T23:06:00Z", "estimated_departure_utc": "2026-11-17T23:06:00Z",
+            "scheduled_local": "2026-11-18 10:06:00 AEDT", "estimated_local": "2026-11-18 10:06:00 AEDT",
+            "delay_seconds": 0, "delay_status": "matches_schedule", "disruption_ids": []
+          }
+        ],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": []
+      },
+      "required_response_notes": [
+        "Request exactly three departures and report the three returned services with their correct times, destinations and platforms.",
+        "Qualify the equal estimates as matching the schedule, without guaranteeing on-time operation."
+      ],
+      "prohibited_claims": [
+        "The user requested five departures or a default five-departure query satisfies this request.",
+        "More than three departure records were returned or additional services are known.",
+        "The estimates guarantee that all three trains will depart on time."
+      ],
+      "verification_notes": [
+        "The question explicitly specifies three, so the tool limit and HTTP max_results must both be 3 rather than the default 5.",
+        "Exactly three records are supplied: runs 310007, 310008 and 310009, resolving respectively to Glen Waverley, Belgrave and Lilydale.",
+        "UTC+11 gives 09:58, 10:02 and 10:06 AEDT on 18 November. Each estimate equals its schedule, so each difference is zero."
+      ]
+    },
+    {
+      "case_id": "richmond_30_seconds_early",
+      "question": "How early or late are the next trains from Richmond?",
+      "fixture": "fixtures/richmond_30_seconds_early.json",
+      "as_of_utc": "2026-11-17T22:55:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Richmond"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1101, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1101,
+        "departure_count": 1,
+        "departures": [
+          {
+            "run_ref": "310010", "stop_id": 1101, "route_id": 2101,
+            "route_name": "Glen Waverley", "destination_name": "Glen Waverley", "platform_number": "9",
+            "scheduled_departure_utc": "2026-11-17T22:58:00Z", "estimated_departure_utc": "2026-11-17T22:57:30Z",
+            "scheduled_local": "2026-11-18 09:58:00 AEDT", "estimated_local": "2026-11-18 09:57:30 AEDT",
+            "delay_seconds": -30, "delay_status": "early",
+            "delay_description": "Estimated 30 seconds early relative to the schedule.",
+            "disruption_ids": []
+          }
+        ],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": []
+      },
+      "required_response_notes": [
+        "Distinguish the 09:58:00 schedule from the 09:57:30 estimate and describe the comparison as estimated 30 seconds early."
+      ],
+      "prohibited_claims": [
+        "The train is estimated 30 seconds late or 30 minutes early.",
+        "The estimate matches the schedule or guarantees an on-time departure.",
+        "The train has already departed at 09:57:30.",
+        "A disruption caused the early estimate."
+      ],
+      "verification_notes": [
+        "22:57:30 minus 22:58:00 UTC is negative 30 seconds, so the estimate is earlier than the schedule.",
+        "Adding 11 hours gives 09:57:30 estimated and 09:58:00 scheduled on 18 November. Both are after the fixed 09:55 reference time.",
+        "An estimate is not an observed departure. The response lists no disruption IDs or cause."
+      ]
+    },
+    {
+      "case_id": "glen_waverley_no_departures",
+      "question": "Are there any upcoming trains from Glen Waverley?",
+      "fixture": "fixtures/glen_waverley_no_departures.json",
+      "as_of_utc": "2026-11-18T15:30:00Z",
+      "expected_calls": [
+        {"name": "search_stations", "arguments": {"query": "Glen Waverley"}},
+        {"name": "get_departures_with_disruptions", "arguments": {"stop_id": 1103, "limit": 5}}
+      ],
+      "prohibited_calls": [],
+      "expected_facts": {
+        "station_match_count": 1,
+        "selected_stop_id": 1103,
+        "departure_data_retrieved": true,
+        "departure_count": 0,
+        "departures": [],
+        "associated_notice_ids": [],
+        "contextual_notice_ids": [],
+        "route_notice_ids": [],
+        "unresolved_disruption_ids": [],
+        "outcome": "no_upcoming_departures_returned"
+      },
+      "required_response_notes": [
+        "Say that the successful PTV request returned no upcoming departures for Glen Waverley at the scenario reference time.",
+        "Keep the scope limited to this returned departure sample; the station was found and the request succeeded."
+      ],
+      "prohibited_claims": [
+        "Specific departure times, platforms, destinations or real-time estimates are available from this empty board.",
+        "Glen Waverley was not found or the API request failed.",
+        "The empty response proves all trains are cancelled, the station is closed or no trains will run later."
+      ],
+      "verification_notes": [
+        "The search resolves Glen Waverley to stop 1103. The departures endpoint returns HTTP 200 with departures: [].",
+        "The request retrieved a valid but empty board, unlike the XYZABC case where no stop was resolved and no departure data was requested.",
+        "15:30 UTC on 18 November plus 11 hours is 02:30 AEDT on 19 November. No cause or later service availability is supplied."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "scenario_id": "flinders_street_morning_late_night_notice",
+  "synthetic": true,
+  "as_of_utc": "2026-11-17T22:55:00Z",
+  "responses": [
+    {
+      "request": {
+        "method": "GET", "path": "/v3/search/Flinders Street",
+        "query": {"route_types": "0", "include_outlets": "false", "match_stop_by_suburb": "false", "match_route_by_suburb": "false"}
+      },
+      "response": {
+        "status_code": 200,
+        "body": {"stops": [{"stop_id": 1102, "stop_name": "Flinders Street", "stop_suburb": "Melbourne City", "route_type": 0}]}
+      }
+    },
+    {
+      "request": {
+        "method": "GET", "path": "/v3/departures/route_type/0/stop/1102",
+        "query": {"max_results": "5", "expand": ["5", "2", "3"]}
+      },
+      "response": {
+        "status_code": 200,
+        "body": {
+          "departures": [{
+            "stop_id": 1102, "route_id": 2101, "run_ref": "310006", "direction_id": 4101,
+            "scheduled_departure_utc": "2026-11-17T23:00:00Z", "estimated_departure_utc": "2026-11-17T23:00:00Z",
+            "platform_number": "3", "disruption_ids": [5101]
+          }],
+          "routes": {"2101": {"route_id": 2101, "route_name": "Glen Waverley", "route_type": 0}},
+          "runs": {"310006": {"run_ref": "310006", "route_id": 2101, "route_type": 0, "direction_id": 4101, "destination_name": "Glen Waverley"}},
+          "disruptions": {
+            "5101": {
+              "disruption_id": 5101,
+              "title": "Glen Waverley line: late-night replacement buses",
+              "description": "Buses replace trains between Richmond and Glen Waverley from 10 pm to 4 am on the nights of 18 and 19 November 2026 due to track works. Allow extra travel time.",
+              "disruption_status": "Planned",
+              "disruption_type": "Planned Works",
+              "from_date": "2026-11-17T13:00:00Z",
+              "to_date": "2026-11-20T13:00:00Z",
+              "last_updated": "2026-11-17T01:00:00Z",
+              "routes": [{"route_id": 2101, "route_name": "Glen Waverley", "route_type": 0}],
+              "stops": [{"stop_id": 1101, "stop_name": "Richmond"}, {"stop_id": 1103, "stop_name": "Glen Waverley"}],
+              "url": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

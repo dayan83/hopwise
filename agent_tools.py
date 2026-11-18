@@ -1,5 +1,6 @@
 """Two validated adapters exposing existing Hopwise functions to the LLM."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 import departure_service
 import ptv
-from models import DepartureBoard, Disruption
+from models import Departure, DepartureBoard, Disruption
 
 
 class ToolArguments(BaseModel):
@@ -59,10 +60,13 @@ def _local(value: datetime | None, melbourne: ZoneInfo) -> str | None:
     return value.astimezone(melbourne).strftime("%Y-%m-%d %H:%M:%S %Z") if value is not None else None
 
 
-def _notice_output(notice: Disruption, melbourne: ZoneInfo) -> dict:
+def _notice_output(notice: Disruption, melbourne: ZoneInfo, *, boarding_stop_id: int,
+                   departure: Departure | None = None) -> dict:
     result = notice.model_dump(mode="json")
     for name in ("from_date", "to_date", "last_updated"):
         result[name + "_local"] = _local(getattr(notice, name), melbourne)
+    result["relevance"] = departure_service.assess_disruption_relevance(
+        notice, boarding_stop_id, departure)
     return result
 
 
@@ -73,13 +77,26 @@ def _board_output(board: DepartureBoard) -> dict:
         departure = entry.departure
         item["departure"]["scheduled_local"] = _local(departure.scheduled_departure_utc, melbourne)
         item["departure"]["estimated_local"] = _local(departure.estimated_departure_utc, melbourne)
+        scheduled = item["departure"]["scheduled_local"] or "unavailable"
+        estimated = item["departure"]["estimated_local"]
+        item["departure"]["departure_time_description"] = (
+            f"Estimated departure: {estimated}; scheduled departure: {scheduled}."
+            if estimated is not None else
+            f"Scheduled departure: {scheduled}; real-time estimate unavailable."
+        )
         delay = departure_service.departure_delay(departure)
         item["departure"]["delay_seconds"] = delay.total_seconds() if delay is not None else None
-        item["associated_disruptions"] = [_notice_output(notice, melbourne)
-                                           for notice in entry.associated_disruptions]
-    result["contextual_notices"] = [_notice_output(notice, melbourne) for notice in board.contextual_notices]
-    result["route_notices"] = {str(route_id): [_notice_output(notice, melbourne) for notice in notices]
-                                for route_id, notices in board.route_notices.items()}
+        item["departure"].update(departure_service.interpret_delay(item["departure"]["delay_seconds"]))
+        item["associated_disruptions"] = [
+            _notice_output(notice, melbourne, boarding_stop_id=board.stop_id, departure=departure)
+            for notice in entry.associated_disruptions]
+    result["contextual_notices"] = [
+        _notice_output(notice, melbourne, boarding_stop_id=board.stop_id)
+        for notice in board.contextual_notices]
+    result["route_notices"] = {
+        str(route_id): [_notice_output(notice, melbourne, boarding_stop_id=board.stop_id)
+                        for notice in notices]
+        for route_id, notices in board.route_notices.items()}
     return result
 
 
@@ -107,17 +124,28 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def execute_tool(name: str, arguments_json: str, context: ToolContext) -> dict:
-    """Validate and execute an allowlisted tool, returning safe JSON-compatible data."""
+def execute_tool(name: str, arguments_json: str, context: ToolContext, *,
+                 on_result: Callable[[dict | None, dict], None] | None = None) -> dict:
+    """Validate and execute an allowlisted tool, returning safe JSON-compatible data.
+
+    The optional observer receives validated arguments (None for rejected input)
+    and the existing result. It never receives raw invalid arguments or errors.
+    """
+    def finish(result, arguments=None):
+        if on_result is not None:
+            on_result(arguments.model_dump() if arguments is not None else None, result)
+        return result
+
     if not isinstance(name, str) or name not in _TOOLS:
-        return _error("unknown_tool", "That tool is not available. Use one of the two declared tools.")
+        return finish(_error("unknown_tool", "That tool is not available. Use one of the two declared tools."))
     arguments_model, handler, _ = _TOOLS[name]
     try:
         arguments = arguments_model.model_validate_json(arguments_json)
     except ValidationError:
-        return _error("invalid_arguments", "Arguments must follow the tool schema: a station name, or a positive stop_id and integer limit from 1 to 10.")
+        return finish(_error("invalid_arguments", "Arguments must follow the tool schema: a station name, or a positive stop_id and integer limit from 1 to 10."))
     try:
-        return handler(arguments, context)
+        result = handler(arguments, context)
     except (ptv.PTVRequestError, ValueError, ZoneInfoNotFoundError):
         # Never forward exception text, which may contain credentials or signed URLs.
-        return _error("data_unavailable", "PTV data could not be retrieved. Check server configuration or try again later.")
+        result = _error("data_unavailable", "PTV data could not be retrieved. Check server configuration or try again later.")
+    return finish(result, arguments)

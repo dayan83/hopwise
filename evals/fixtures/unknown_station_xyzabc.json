@@ -1,0 +1,14 @@
+{
+  "scenario_id": "unknown_station_xyzabc",
+  "synthetic": true,
+  "as_of_utc": "2026-11-17T22:55:00Z",
+  "responses": [
+    {
+      "request": {
+        "method": "GET", "path": "/v3/search/XYZABC",
+        "query": {"route_types": "0", "include_outlets": "false", "match_stop_by_suburb": "false", "match_route_by_suburb": "false"}
+      },
+      "response": {"status_code": 200, "body": {"stops": []}}
+    }
+  ]
+}
