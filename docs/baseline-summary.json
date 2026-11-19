@@ -1,0 +1,162 @@
+{
+  "description": "Historical nine-case baseline, before the estimate-first presentation change. Compact export of saved results; no new evaluation was executed.",
+  "source_run_id": "20261118T054831Z_a1380bd92838",
+  "recorded_date": "2026-11-18",
+  "dataset_version": "0.2.0",
+  "dataset_sha256": "064f867855c95471712b30e7283a28c0bc86d7f593baed7691d9b04cb0c58ccf",
+  "configuration": {
+    "model_requested": "gpt-5.5",
+    "instructions_sha256": "97b986bda251a82b37c38de9f949f20687a5eb6a963cf2d680b7d5bf507f3fc2",
+    "tools_sha256": "70d08e65f404e2092da77cd28d9bc02a4340758b19c24944624c70f4fe585575",
+    "max_tool_rounds": 5
+  },
+  "returned_models": [
+    "gpt-5.5-2026-04-23"
+  ],
+  "execution": {
+    "cases_attempted": 9,
+    "cases_completed": 9,
+    "cases_with_errors": 0,
+    "fixture_misses": 0
+  },
+  "model_requests": 25,
+  "token_usage": {
+    "input_tokens": 23581,
+    "output_tokens": 1681,
+    "total_tokens": 25262
+  },
+  "metrics": {
+    "tool_selection": {
+      "denominator": 9,
+      "passed": 9,
+      "failed": 0,
+      "not_applicable": 0,
+      "checks_passed": 9,
+      "checks_total": 9,
+      "failed_case_ids": []
+    },
+    "arguments": {
+      "denominator": 9,
+      "passed": 9,
+      "failed": 0,
+      "not_applicable": 0,
+      "checks_passed": 16,
+      "checks_total": 16,
+      "failed_case_ids": []
+    },
+    "execution": {
+      "denominator": 9,
+      "passed": 9,
+      "failed": 0,
+      "not_applicable": 0,
+      "checks_passed": 61,
+      "checks_total": 61,
+      "failed_case_ids": []
+    },
+    "source_facts": {
+      "denominator": 9,
+      "passed": 9,
+      "failed": 0,
+      "not_applicable": 0,
+      "checks_passed": 200,
+      "checks_total": 200,
+      "failed_case_ids": []
+    },
+    "timing_wording": {
+      "denominator": 3,
+      "passed": 3,
+      "failed": 0,
+      "not_applicable": 6,
+      "checks_passed": 3,
+      "checks_total": 3,
+      "failed_case_ids": []
+    }
+  },
+  "manual_review": {
+    "factual_accuracy": {
+      "denominator": 9,
+      "reviewed": 9,
+      "coverage": 1,
+      "mean": 2
+    },
+    "grounding": {
+      "denominator": 9,
+      "reviewed": 9,
+      "coverage": 1,
+      "mean": 2
+    },
+    "response_relevance": {
+      "denominator": 9,
+      "reviewed": 9,
+      "coverage": 1,
+      "mean": 1.6666666666666667
+    },
+    "fully_reviewed_cases": 9
+  },
+  "review_provenance": "Project author review, not an independent assessment. Small synthetic dataset; scores do not establish production readiness or post-change quality.",
+  "case_reviews": [
+    {
+      "case_id": "richmond_departures",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correct departure details. Clear presentation of estimated times and disruption information."
+    },
+    {
+      "case_id": "unknown_station_xyzabc",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correctly identifies an unknown station without inventing departures."
+    },
+    {
+      "case_id": "richmond_30_seconds_late",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correctly reports a 30-second estimated delay with scheduled and estimated timestamps."
+    },
+    {
+      "case_id": "glen_waverley_no_estimate",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 1,
+      "reviewer_notes": "Correctly acknowledges missing real-time information, but should explicitly label 10:05 as the scheduled departure time."
+    },
+    {
+      "case_id": "flinders_street_morning_late_night_notice",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 1,
+      "reviewer_notes": "Correctly preserves the associated disruption and acknowledges uncertainty. However, it gives significant attention to late-night works when answering a morning departure question."
+    },
+    {
+      "case_id": "ambiguous_rich_station",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correctly identifies ambiguity and requests clarification without retrieving departures."
+    },
+    {
+      "case_id": "richmond_next_three",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correctly retrieves and presents three departures as requested."
+    },
+    {
+      "case_id": "richmond_30_seconds_early",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 1,
+      "reviewer_notes": "Correctly identifies the train as 30 seconds early. However, displaying the scheduled time first could confuse passengers about the expected departure time."
+    },
+    {
+      "case_id": "glen_waverley_no_departures",
+      "factual_accuracy": 2,
+      "grounding": 2,
+      "response_relevance": 2,
+      "reviewer_notes": "Correctly reports that no departures were returned without inventing services or explanations."
+    }
+  ]
+}

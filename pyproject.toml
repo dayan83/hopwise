@@ -1,7 +1,7 @@
 [project]
 name = "hopwise"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Melbourne train assistant with PTV integration, OpenAI tool calling and reproducible evaluations."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

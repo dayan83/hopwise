@@ -6,6 +6,16 @@ dist/
 wheels/
 *.egg-info
 
+# Local test reports and caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+
 # Virtual environments
 .venv
 .env
