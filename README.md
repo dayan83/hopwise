@@ -20,7 +20,7 @@ The transport logic also works without an LLM.
 - Keeps scheduled times and real-time estimates distinct, including missing estimates.
 - Links disruption notices using PTV's explicit `disruption_ids`, keeping broader route context separate.
 - Answers natural-language questions through two validated, allowlisted tools.
-- Provides optional sanitized execution traces and a nine-case evaluation dataset.
+- Provides optional sanitized execution traces and a fourteen-case evaluation dataset.
 
 **Stack:** Python 3.11 | uv | HTTPX | Pydantic | OpenAI Responses API | Streamlit | pytest
 
@@ -119,10 +119,12 @@ and incur the API usage associated with your account. Tests do neither.
 
 ## Evaluation
 
-The versioned [golden dataset](evals/dataset.json) contains nine manually authored
+The versioned [golden dataset](evals/dataset.json), v0.3.0, contains fourteen manually authored
 scenarios: normal departures, unknown and ambiguous stations, explicit result
 counts, early/late estimates, missing estimates, empty departures and a morning
-service associated with a late-night notice.
+service associated with a late-night notice. Robustness cases add a PTV API failure,
+unresolved disruption details, mixed early/late/missing estimates, an untrusted
+instruction in a notice, and directly associated versus contextual notices.
 
 | Activity | LLM | PTV data | Purpose |
 | --- | --- | --- | --- |

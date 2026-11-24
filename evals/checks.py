@@ -200,7 +200,19 @@ def score_case(case, result, *, required_fixture_indices, run_id):
                    and len(matches) == 1 and matches[0].get("tool_name") == expected["name"]
                    and isinstance(matches[0].get("arguments"), dict) and matches[0].get("ok") is True
                    and matches[0].get("result", {}).get("ok") is True)
-        check = _check(f"successful_tool.{i + 1}", True, success, "execution_trace.tool_calls")
+        check_id = f"successful_tool.{i + 1}"
+        if "expected_error_code" in expected:
+            # Opt-in failure scenarios; unannotated historical calls still require success.
+            code = expected["expected_error_code"]
+            success = (isinstance(code, str) and bool(code)
+                       and request.get("tool_name") == expected["name"] and request_ids.count(call_id) == 1
+                       and len(matches) == 1 and matches[0].get("tool_name") == expected["name"]
+                       and _arguments_match(expected, matches[0]) and matches[0].get("ok") is False
+                       and matches[0].get("result", {}).get("ok") is False
+                       and matches[0].get("result", {}).get("error", {}).get("code") == code
+                       and "board" not in matches[0].get("result", {}))
+            check_id = f"expected_tool_error.{i + 1}"
+        check = _check(check_id, True, success, "execution_trace.tool_calls")
         check["call_id"] = call_id
         execution.append(check)
     answer = result.get("final_answer") or ""

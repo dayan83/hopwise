@@ -212,9 +212,15 @@ def test_all_existing_scenarios_through_real_ptv_and_service_interfaces(case):
         results = [execute_tool(call["name"], json.dumps(call["arguments"]), context)
                    for call in case["expected_calls"]]
     assert agent_tools.datetime is original_clock
-    assert all(result["ok"] for result in results)
+    for call, result in zip(case["expected_calls"], results, strict=True):
+        if "expected_error_code" in call:
+            assert result["ok"] is False
+            assert result["error"]["code"] == call["expected_error_code"]
+            assert "board" not in result
+        else:
+            assert result["ok"] is True
     assert len(results[0]["stations"]) == case["expected_facts"]["station_match_count"]
-    if len(results) == 2:
+    if len(results) == 2 and results[1]["ok"]:
         assert results[1]["retrieved_at_utc"] == fixture.as_of_utc.isoformat()
         board = results[1]["board"]
         expected = case["expected_facts"]
@@ -225,8 +231,14 @@ def test_all_existing_scenarios_through_real_ptv_and_service_interfaces(case):
         notices = {notice["disruption_id"]: notice for entry in board["departures"]
                    for notice in entry["associated_disruptions"]}
         assert sorted(notices) == expected["associated_notice_ids"]
+        assert sorted({notice["disruption_id"] for notice in board["contextual_notices"]}) == expected["contextual_notice_ids"]
+        assert sorted({notice["disruption_id"] for values in board["route_notices"].values() for notice in values}) == expected["route_notice_ids"]
+        assert sorted({notice_id for entry in board["departures"] for notice_id in entry["unresolved_disruption_ids"]}) == expected["unresolved_disruption_ids"]
         for facts in expected.get("notices", []):
-            assert notices[facts["disruption_id"]]["relevance"] == facts["relevance"]
+            notice = notices[facts["disruption_id"]]
+            for key, value in facts.items():
+                if key not in {"associated_run_refs", "described_scope", "immediate_passenger_impact"}:
+                    assert notice[key] == value
     else:
         assert context.known_stop_ids == {station["stop_id"] for station in results[0]["stations"]}
         assert case["expected_facts"]["departure_data_retrieved"] is False
@@ -265,6 +277,59 @@ def test_explicit_three_fixture_rejects_default_five_limit():
     assert fixture.match_counts == (0, 1)
 
 
+def test_departure_failure_is_http_503_not_an_empty_board(caplog):
+    fixture = FixtureTransport.from_file(EVALS / "fixtures/ptv_api_failure.json")
+    context = ToolContext(config=fixture.config, transport=fixture)
+    assert execute_tool("search_stations", '{"query":"Richmond"}', context)["ok"] is True
+    with caplog.at_level("DEBUG"):
+        result = execute_tool("get_departures_with_disruptions", '{"stop_id":1101,"limit":5}', context)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "data_unavailable"
+    assert "board" not in result and "retrieved_at_utc" not in result
+    assert fixture.match_counts == (1, 1)
+    fixture.assert_all_used()
+    with pytest.raises(PTVRequestError, match="HTTP 503"):
+        get_departures_response(1101, config=fixture.config, transport=fixture)
+    rendered = json.dumps(result) + caplog.text
+    for value in (fixture.config.api_key, fixture.config.dev_id, "signature=",
+                  "The timetable service is temporarily unavailable"):
+        assert value not in rendered
+
+
+def test_missing_unresolved_notice_fallback_fixture_fails_closed():
+    data = json.loads((EVALS / "fixtures/unresolved_disruption_id.json").read_text(encoding="utf-8"))
+    data["responses"].pop()
+    fixture = FixtureTransport(data)
+    context = ToolContext(config=fixture.config, transport=fixture, known_stop_ids={1101})
+    with pytest.raises(FixtureMiss, match="fixture_miss"):
+        execute_tool("get_departures_with_disruptions", '{"stop_id":1101,"limit":5}', context)
+    assert fixture.match_counts == (0, 1)
+    assert fixture.miss_count == 1
+
+
+def test_notice_bounds_and_affected_entities_are_consistent_with_fixture_catalogue():
+    data = [json.loads((EVALS / case["fixture"]).read_text(encoding="utf-8")) for case in CASES]
+    stations = {stop["stop_id"]: stop["stop_name"] for scenario in data
+                for stop in scenario["responses"][0]["response"]["body"]["stops"]}
+    routes = {route["route_id"]: route["route_name"] for scenario in data
+              for entry in scenario["responses"] for route in entry["response"]["body"].get("routes", {}).values()}
+    for scenario in data:
+        for response in scenario["responses"]:
+            for key, notice in response["response"]["body"].get("disruptions", {}).items():
+                if not isinstance(notice, dict):  # Empty transport-mode groups in fallback responses.
+                    continue
+                assert str(notice["disruption_id"]) == key
+                start, end, updated = [datetime.fromisoformat(notice[field]) for field in ("from_date", "to_date", "last_updated")]
+                assert all(value.utcoffset().total_seconds() == 0 for value in (start, end, updated))
+                assert start <= end
+                assert updated <= datetime.fromisoformat(scenario["as_of_utc"])
+                for stop in notice["stops"]:
+                    assert stations[stop["stop_id"]] == stop["stop_name"]
+                for route in notice["routes"]:
+                    assert routes[route["route_id"]] == route["route_name"]
+                    assert route["route_type"] == 0
+
+
 def test_dataset_ids_and_golden_times_match_literal_ptv_records():
     """Check authored labels with stdlib arithmetic, without production delay helpers."""
     stations_by_id, routes_by_id, runs_by_ref = {}, {}, {}
@@ -292,6 +357,11 @@ def test_dataset_ids_and_golden_times_match_literal_ptv_records():
         assert stop_id in {station["stop_id"] for station in stations}
         assert request["path"] == f"/v3/departures/route_type/0/stop/{stop_id}"
         assert request["query"]["max_results"] == str(arguments["limit"])
+        if "expected_error_code" in case["expected_calls"][1]:
+            assert data["responses"][1]["response"]["status_code"] == 503
+            assert "departures" not in body
+            assert "departure_count" not in facts
+            continue
         assert len(body["departures"]) == facts["departure_count"] <= arguments["limit"]
         for record, golden in zip(body["departures"], facts["departures"], strict=True):
             assert record["stop_id"] == stop_id == golden["stop_id"]
@@ -308,7 +378,11 @@ def test_dataset_ids_and_golden_times_match_literal_ptv_records():
             assert record["run_ref"] not in runs_by_ref
             runs_by_ref[record["run_ref"]] = run
             assert record["disruption_ids"] == golden["disruption_ids"]
-            assert all(body["disruptions"][str(key)]["disruption_id"] == key for key in record["disruption_ids"])
+            for key in record["disruption_ids"]:
+                if key in facts["unresolved_disruption_ids"]:
+                    assert str(key) not in body["disruptions"]
+                else:
+                    assert body["disruptions"][str(key)]["disruption_id"] == key
             for key, local_key in [("scheduled_departure_utc", "scheduled_local"),
                                    ("estimated_departure_utc", "estimated_local")]:
                 assert record[key] == golden[key]

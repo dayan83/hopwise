@@ -39,6 +39,8 @@ def saved_result(case):
                           "call_id": call_id, "arguments_parse_status": "parsed", "omitted_argument_fields": False})
         if call["name"] == "search_stations":
             result = {"ok": True, "stations": stations}
+        elif "expected_error_code" in call:
+            result = {"ok": False, "error": {"code": call["expected_error_code"]}}
         else:
             notices = {notice["disruption_id"]: {key: deepcopy(value) for key, value in notice.items()
                                                 if key not in {"associated_run_refs", "described_scope", "immediate_passenger_impact"}}
@@ -46,17 +48,18 @@ def saved_result(case):
             result = {"ok": True, "board": {
                 "stop_id": facts["selected_stop_id"],
                 "departures": [{"departure": deepcopy(departure),
-                                "associated_disruptions": [deepcopy(notices[notice_id]) for notice_id in departure["disruption_ids"]],
-                                "unresolved_disruption_ids": []} for departure in facts["departures"]],
-                "contextual_notices": [], "route_notices": {},
+                                "associated_disruptions": [deepcopy(notices[notice_id]) for notice_id in departure["disruption_ids"] if notice_id in notices],
+                                "unresolved_disruption_ids": [notice_id for notice_id in departure["disruption_ids"] if notice_id in facts["unresolved_disruption_ids"]]} for departure in facts["departures"]],
+                "contextual_notices": [{"disruption_id": notice_id} for notice_id in facts["contextual_notice_ids"]],
+                "route_notices": {},
             }}
         executed.append({"tool_name": call["name"], "call_id": call_id, "arguments": deepcopy(call["arguments"]),
-                         "ok": True, "result": result})
+                         "ok": result["ok"], "result": result})
     descriptions = [record["delay_description"] for record in facts.get("departures", []) if "delay_description" in record]
     return {"run_id": RUN_ID, "case_id": case["case_id"], "question": case["question"], "status": "completed",
             "requested_tool_calls": requested, "execution_trace": {"status": "completed", "tool_calls": executed},
             "final_answer": " ".join(descriptions) or "Retrieved information.", "error": None,
-            "fixture_coverage": {"match_counts": [1] * len(requested), "unused_requests": [], "miss_count": 0}}
+            "fixture_coverage": {"match_counts": [1] * len(fixture["responses"]), "unused_requests": [], "miss_count": 0}}
 
 
 def score(case, result):
@@ -103,6 +106,41 @@ def test_query_variants_require_explicit_declaration(late_case):
     assert score(late_case, result)["metrics"]["arguments"]["status"] == "pass"
     result["requested_tool_calls"][0]["arguments"]["query"] = "  Richmond  "
     assert score(late_case, result)["metrics"]["arguments"]["status"] == "pass"
+
+
+def test_expected_tool_failure_requires_explicit_golden_annotation():
+    case = deepcopy(next(case for case in DATASET["cases"] if case["case_id"] == "ptv_api_failure"))
+    result = saved_result(case)
+    scored = score(case, result)
+    assert scored["automated_checks_passed"] is True
+    assert scored["execution_completed"] is True
+    assert scored["manual_review"]["grounding"] is None
+    assert scored["metrics"]["execution"]["checks"][-1]["id"] == "expected_tool_error.2"
+    case["expected_calls"][1].pop("expected_error_code")
+    scored = score(case, result)
+    assert scored["metrics"]["execution"]["status"] == "fail"
+    assert scored["metrics"]["execution"]["checks"][-1]["id"] == "successful_tool.2"
+
+
+@pytest.mark.parametrize("mutation", ["wrong_code", "missing_error", "empty_success", "error_with_board", "wrong_call_id", "wrong_executed_arguments"])
+def test_expected_failure_check_rejects_wrong_or_uncorrelated_outcomes(mutation):
+    case = next(case for case in DATASET["cases"] if case["case_id"] == "ptv_api_failure")
+    result = saved_result(case)
+    call = result["execution_trace"]["tool_calls"][1]
+    if mutation == "wrong_code":
+        call["result"]["error"]["code"] = "unverified_stop_id"
+    elif mutation == "missing_error":
+        call["result"].pop("error")
+    elif mutation == "empty_success":
+        call["ok"] = True
+        call["result"] = {"ok": True, "board": {"stop_id": 1101, "departures": []}}
+    elif mutation == "error_with_board":
+        call["result"]["board"] = {"stop_id": 1101, "departures": []}
+    elif mutation == "wrong_call_id":
+        call["call_id"] = "uncorrelated-error"
+    else:
+        call["arguments"]["stop_id"] = 1102
+    assert score(case, result)["metrics"]["execution"]["status"] == "fail"
 
 
 @pytest.mark.parametrize("key,value", [("stop_id", "1101"), ("stop_id", 1102), ("limit", 3), ("limit", 5.0), ("limit", True)])
@@ -198,8 +236,9 @@ def test_csv_json_aggregates_and_manual_nulls(saved_run):
     assert aggregate["cases"] == aggregate["execution_completed"] == CASE_COUNT
     assert aggregate["metrics"]["tool_selection"]["denominator"] == CASE_COUNT
     assert aggregate["metrics"]["arguments"]["checks_total"] == sum(len(case["expected_calls"]) for case in DATASET["cases"])
-    assert aggregate["metrics"]["timing_wording"]["denominator"] == 3
-    assert aggregate["metrics"]["timing_wording"]["not_applicable"] == CASE_COUNT - 3
+    timing_cases = sum(any("delay_description" in row for row in case["expected_facts"].get("departures", [])) for case in DATASET["cases"])
+    assert aggregate["metrics"]["timing_wording"]["denominator"] == timing_cases
+    assert aggregate["metrics"]["timing_wording"]["not_applicable"] == CASE_COUNT - timing_cases
     assert aggregate["manual_review"]["fully_reviewed_cases"] == 0
     rows = list(csv.DictReader((saved_run / "scores/cases.csv").open(encoding="utf-8", newline="")))
     assert len(rows) == CASE_COUNT
