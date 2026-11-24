@@ -10,7 +10,7 @@ import httpx2
 from openai import APIError, OpenAI
 import pytest
 
-from agent import AgentError, MAX_TOOL_ROUNDS, answer_question
+from agent import AgentError, INSTRUCTIONS, MAX_TOOL_ROUNDS, answer_question
 from agent_trace import AgentTrace
 import departure_service
 from evals.fixture_transport import FixtureTransport
@@ -154,6 +154,95 @@ def test_timing_presentation_contract_reaches_model_and_trace_from_baseline_fixt
         assert "real-time estimate is unavailable" in request["instructions"]
         assert "Never substitute a scheduled time" in request["instructions"]
     fixture.assert_all_used()
+    assert fixture.miss_count == 0
+
+
+def test_disruption_response_policy_separates_stated_hours_from_actual_impact():
+    """An offline prompt contract; this does not score generated LLM prose."""
+    policy = " ".join(INSTRUCTIONS.split())
+    for requirement in (
+        "For departure questions, lead with departure times, destinations, platforms and supplied delay information.",
+        "Summarise directly associated notices briefly when their immediate relevance is unclear",
+        "keep the association and any explicit safety information visible",
+        "Use relevance annotations as limited date/stop evidence, not a verdict of impact.",
+        "If notice text explicitly states operating hours, briefly relate those stated hours to the departure, identifying this as interpretation of the notice text.",
+        "Different described hours do not prove non-impact.",
+        "Ambiguous or incomplete notice details leave actual impact uncertain.",
+        "Never invent operating hours, dates, affected stations or causal relationships not supported by retrieved data.",
+        "association alone is not proof that a train is delayed or cancelled.",
+        "within_window only means the departure falls within the supplied date bounds; it does not prove a disruption is operating at that time or affecting that train.",
+        "Do not infer unstated recurring overnight operating windows from descriptions.",
+    ):
+        assert requirement in policy, requirement
+
+
+@pytest.mark.parametrize("variant", ["overnight", "missing_description", "safety"])
+def test_disruption_policy_reaches_model_without_removing_associated_notices(monkeypatch, variant):
+    """Retain notices and evidence; only instructions govern the model's wording."""
+    def forbidden(*args, **kwargs):
+        pytest.fail("Disruption policy regressions must not use live APIs or real credentials")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(httpx2.HTTPTransport, "handle_request", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(ptv.PTVConfig, "from_env", forbidden)
+    evals = Path(__file__).resolve().parents[1] / "evals"
+    cases = json.loads((evals / "dataset.json").read_text(encoding="utf-8"))["cases"]
+    case = next(case for case in cases if case["case_id"] == "flinders_street_morning_late_night_notice")
+    data = json.loads((evals / case["fixture"]).read_text(encoding="utf-8"))
+    original_notice = data["responses"][1]["response"]["body"]["disruptions"]["5101"]
+    # Variants exist only in memory; golden cases and fixture files stay untouched.
+    if variant == "missing_description":
+        original_notice["description"] = None
+    elif variant == "safety":
+        original_notice["description"] = "Safety notice: keep clear of the affected platform area and follow staff instructions."
+    fixture = FixtureTransport(data)
+    client = ScriptedClient([
+        *(tool_response(call["name"], json.dumps(call["arguments"]), f"call-{index}")
+          for index, call in enumerate(case["expected_calls"])),
+        final_response("Captured offline disruption policy and evidence."),
+    ])
+    trace = AgentTrace()
+    with fixture.reference_time():
+        answer_question(case["question"], client=client, model="test",
+                        ptv_config=fixture.config, ptv_transport=fixture, trace=trace)
+    output = tool_outputs(client.requests[-1])[-1]
+    assert output["call_id"] == "call-1"
+    sent = json.loads(output["output"])
+    assert sent["ok"] is True
+    board = sent["board"]
+    assert board["stop_id"] == 1102
+    assert len(board["departures"]) == 1
+    entry = board["departures"][0]
+    departure = entry["departure"]
+    assert departure["disruption_ids"] == [5101]
+    assert departure["estimated_local"] == departure["scheduled_local"] == "2026-11-18 10:00:00 AEDT"
+    assert departure["destination_name"] == "Glen Waverley"
+    assert departure["platform_number"] == "3"
+    assert departure["delay_seconds"] == 0
+    assert departure["delay_status"] == "matches_schedule"
+    assert [notice["disruption_id"] for notice in entry["associated_disruptions"]] == [5101]
+    notice = entry["associated_disruptions"][0]
+    assert notice["description"] == original_notice["description"]
+    assert notice["disruption_status"] == "Planned"
+    assert notice["relevance"] == case["expected_facts"]["notices"][0]["relevance"]
+    assert notice["from_date"] == original_notice["from_date"]
+    assert notice["to_date"] == original_notice["to_date"]
+    assert entry["unresolved_disruption_ids"] == []
+    assert board["contextual_notices"] == []
+    assert board["route_notices"] == {}
+    captured_notice = trace.tool_calls[-1]["result"]["board"]["departures"][0]["associated_disruptions"][0]
+    assert captured_notice["description"] == original_notice["description"]
+    assert captured_notice["disruption_id"] == 5101
+    assert captured_notice["relevance"] == notice["relevance"]
+    if variant == "overnight":
+        assert "from 10 pm to 4 am" in notice["description"]
+        assert notice["relevance"]["temporal_status"] == "within_window"
+    assert len(client.requests) == 3
+    assert [call["name"] for call in client.tool_calls] == [call["name"] for call in case["expected_calls"]]
+    assert all(request["instructions"] == INSTRUCTIONS for request in client.requests)
+    fixture.assert_all_used()
+    assert fixture.match_counts == (1, 1)
     assert fixture.miss_count == 0
 
 
