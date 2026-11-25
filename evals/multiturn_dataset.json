@@ -1,0 +1,553 @@
+{
+  "schema_version": 1,
+  "dataset_version": "0.1.0",
+  "suite_id": "basic_conversation",
+  "description": "Five synthetic multi-turn scenarios. Golden state, calls and source facts are independent of scripted LLM outputs.",
+  "notes": [
+    "This suite is separate from the frozen single-turn dataset v0.3.0 and does not change its scoring semantics.",
+    "Each turn gets a new FixtureTransport and fixed reference time; only ConversationState is retained within a scenario.",
+    "No-call turns reuse dormant search/departure definitions solely for safe transport injection and clock scoping. All match counts must remain zero.",
+    "Exact clarification expectations are narrow contracts for the application's deterministic clarification messages, not general semantic quality scores.",
+    "Departure run references in the changed Richmond snapshot are intentionally different so stale board reuse fails source-fact checks."
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "retain_station_context",
+      "reviewer_notes": [
+        "Confirm that the response answers the follow-up for Richmond and keeps each current departure's details together."
+      ],
+      "turns": [
+        {
+          "turn_id": "1",
+          "question": "What are the next trains from Richmond?",
+          "fixture": "fixtures/richmond_departures.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Richmond"
+              }
+            },
+            {
+              "name": "get_departures_with_disruptions",
+              "arguments": {
+                "stop_id": 1101,
+                "limit": 5
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 1,
+            "selected_stop_id": 1101,
+            "departure_count": 3,
+            "departures": [
+              {
+                "run_ref": "310001",
+                "stop_id": 1101,
+                "route_id": 2101,
+                "destination_name": "Glen Waverley",
+                "platform_number": "9",
+                "scheduled_departure_utc": "2026-11-17T22:58:00Z",
+                "estimated_departure_utc": "2026-11-17T22:58:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310002",
+                "stop_id": 1101,
+                "route_id": 2102,
+                "destination_name": "Belgrave",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:02:00Z",
+                "estimated_departure_utc": "2026-11-17T23:02:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310003",
+                "stop_id": 1101,
+                "route_id": 2103,
+                "destination_name": "Lilydale",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:06:00Z",
+                "estimated_departure_utc": "2026-11-17T23:06:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              }
+            ]
+          },
+          "expected_http_counts": [
+            1,
+            1
+          ],
+          "required_response_notes": [
+            "Report only the freshly returned Richmond services, with scheduled and estimated times distinguished."
+          ],
+          "prohibited_claims": [
+            "More services were returned than the three supplied by this fixture."
+          ]
+        },
+        {
+          "turn_id": "2",
+          "question": "What about the next two?",
+          "fixture": "multiturn_fixtures/richmond_followup_two.json",
+          "as_of_utc": "2026-11-17T22:56:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_state_before": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_state_after": {
+            "station_name": "Richmond",
+            "departure_limit": 2
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Richmond"
+              }
+            },
+            {
+              "name": "get_departures_with_disruptions",
+              "arguments": {
+                "stop_id": 1101,
+                "limit": 2
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 1,
+            "selected_stop_id": 1101,
+            "departure_count": 2,
+            "departures": [
+              {
+                "run_ref": "310101",
+                "stop_id": 1101,
+                "route_id": 2101,
+                "destination_name": "Glen Waverley",
+                "platform_number": "8",
+                "scheduled_departure_utc": "2026-11-17T22:59:00Z",
+                "estimated_departure_utc": "2026-11-17T23:00:00Z",
+                "delay_seconds": 60,
+                "delay_status": "late"
+              },
+              {
+                "run_ref": "310102",
+                "stop_id": 1101,
+                "route_id": 2102,
+                "destination_name": "Belgrave",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:03:00Z",
+                "estimated_departure_utc": "2026-11-17T23:03:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              }
+            ]
+          },
+          "expected_http_counts": [
+            1,
+            1
+          ],
+          "required_response_notes": [
+            "Retain Richmond and report no more than two services from this turn's new lookup.",
+            "Use the changed platform, times and run records; do not replay the previous board."
+          ],
+          "prohibited_claims": [
+            "Runs 310001, 310002 or 310003 are the newly returned departures for this turn."
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "change_station",
+      "reviewer_notes": [
+        "Confirm that the follow-up answers for Flinders Street and does not describe the Richmond board as current."
+      ],
+      "turns": [
+        {
+          "turn_id": "1",
+          "question": "What are the next trains from Richmond?",
+          "fixture": "fixtures/richmond_departures.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Richmond"
+              }
+            },
+            {
+              "name": "get_departures_with_disruptions",
+              "arguments": {
+                "stop_id": 1101,
+                "limit": 5
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 1,
+            "selected_stop_id": 1101,
+            "departure_count": 3,
+            "departures": [
+              {
+                "run_ref": "310001",
+                "stop_id": 1101,
+                "route_id": 2101,
+                "destination_name": "Glen Waverley",
+                "platform_number": "9",
+                "scheduled_departure_utc": "2026-11-17T22:58:00Z",
+                "estimated_departure_utc": "2026-11-17T22:58:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310002",
+                "stop_id": 1101,
+                "route_id": 2102,
+                "destination_name": "Belgrave",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:02:00Z",
+                "estimated_departure_utc": "2026-11-17T23:02:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310003",
+                "stop_id": 1101,
+                "route_id": 2103,
+                "destination_name": "Lilydale",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:06:00Z",
+                "estimated_departure_utc": "2026-11-17T23:06:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              }
+            ]
+          },
+          "expected_http_counts": [
+            1,
+            1
+          ],
+          "required_response_notes": [
+            "Report only the freshly returned Richmond services, with scheduled and estimated times distinguished."
+          ],
+          "prohibited_claims": [
+            "More services were returned than the three supplied by this fixture."
+          ]
+        },
+        {
+          "turn_id": "2",
+          "question": "And from Flinders Street instead?",
+          "fixture": "fixtures/flinders_street_morning_late_night_notice.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_state_before": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_state_after": {
+            "station_name": "Flinders Street",
+            "departure_limit": 5
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Flinders Street"
+              }
+            },
+            {
+              "name": "get_departures_with_disruptions",
+              "arguments": {
+                "stop_id": 1102,
+                "limit": 5
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 1,
+            "selected_stop_id": 1102,
+            "departure_count": 1,
+            "departures": [
+              {
+                "run_ref": "310006",
+                "stop_id": 1102,
+                "route_id": 2101,
+                "destination_name": "Glen Waverley",
+                "platform_number": "3",
+                "scheduled_departure_utc": "2026-11-17T23:00:00Z",
+                "estimated_departure_utc": "2026-11-17T23:00:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule",
+                "disruption_ids": [
+                  5101
+                ]
+              }
+            ]
+          },
+          "expected_http_counts": [
+            1,
+            1
+          ],
+          "required_response_notes": [
+            "Switch to Flinders Street. Preserve uncertainty about the associated overnight notice's morning impact."
+          ],
+          "prohibited_claims": [
+            "Richmond is still the boarding station for this answer.",
+            "A linked overnight notice proves that the morning train is cancelled."
+          ]
+        }
+      ]
+    },
+    {
+      "scenario_id": "follow_up_without_context",
+      "reviewer_notes": [
+        "No station preference or earlier conversation exists; no PTV request is justified."
+      ],
+      "turns": [
+        {
+          "turn_id": "1",
+          "question": "What about the next three?",
+          "fixture": "fixtures/richmond_departures.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_calls": [],
+          "expected_facts": {},
+          "expected_http_counts": [
+            0,
+            0
+          ],
+          "required_response_notes": [
+            "Ask the user to identify a station."
+          ],
+          "prohibited_claims": [
+            "A station, departure time or platform has been resolved."
+          ],
+          "expected_answer": "Which Melbourne train station would you like departures from?"
+        }
+      ]
+    },
+    {
+      "scenario_id": "ambiguous_station",
+      "reviewer_notes": [
+        "Multiple plausible stations require a name clarification; ordering must not authorize the first stop."
+      ],
+      "turns": [
+        {
+          "turn_id": "1",
+          "question": "What are the next trains from Rich?",
+          "fixture": "fixtures/ambiguous_rich_station.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Rich"
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 3,
+            "departure_data_retrieved": false
+          },
+          "expected_http_counts": [
+            1
+          ],
+          "required_response_notes": [
+            "Request clarification among Richmond, East Richmond and West Richmond."
+          ],
+          "prohibited_claims": [
+            "One station was selected or departures were retrieved."
+          ],
+          "expected_answer": "Which station do you mean: Richmond (Richmond); East Richmond (Cremorne); West Richmond (Richmond)? Please give the station name."
+        }
+      ]
+    },
+    {
+      "scenario_id": "reset_conversation",
+      "reviewer_notes": [
+        "Reset must clear station and count before the second question, without leaking preferences from turn one."
+      ],
+      "turns": [
+        {
+          "turn_id": "1",
+          "question": "What are the next trains from Richmond?",
+          "fixture": "fixtures/richmond_departures.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": false,
+          "expected_state_before_reset": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_calls": [
+            {
+              "name": "search_stations",
+              "arguments": {
+                "query": "Richmond"
+              }
+            },
+            {
+              "name": "get_departures_with_disruptions",
+              "arguments": {
+                "stop_id": 1101,
+                "limit": 5
+              }
+            }
+          ],
+          "expected_facts": {
+            "station_match_count": 1,
+            "selected_stop_id": 1101,
+            "departure_count": 3,
+            "departures": [
+              {
+                "run_ref": "310001",
+                "stop_id": 1101,
+                "route_id": 2101,
+                "destination_name": "Glen Waverley",
+                "platform_number": "9",
+                "scheduled_departure_utc": "2026-11-17T22:58:00Z",
+                "estimated_departure_utc": "2026-11-17T22:58:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310002",
+                "stop_id": 1101,
+                "route_id": 2102,
+                "destination_name": "Belgrave",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:02:00Z",
+                "estimated_departure_utc": "2026-11-17T23:02:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              },
+              {
+                "run_ref": "310003",
+                "stop_id": 1101,
+                "route_id": 2103,
+                "destination_name": "Lilydale",
+                "platform_number": "10",
+                "scheduled_departure_utc": "2026-11-17T23:06:00Z",
+                "estimated_departure_utc": "2026-11-17T23:06:00Z",
+                "delay_seconds": 0,
+                "delay_status": "matches_schedule"
+              }
+            ]
+          },
+          "expected_http_counts": [
+            1,
+            1
+          ],
+          "required_response_notes": [
+            "Report only the freshly returned Richmond services, with scheduled and estimated times distinguished."
+          ],
+          "prohibited_claims": [
+            "More services were returned than the three supplied by this fixture."
+          ]
+        },
+        {
+          "turn_id": "2",
+          "question": "What about the next two?",
+          "fixture": "fixtures/richmond_departures.json",
+          "as_of_utc": "2026-11-17T22:55:00Z",
+          "reset_before": true,
+          "expected_state_before_reset": {
+            "station_name": "Richmond",
+            "departure_limit": 5
+          },
+          "expected_state_before": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_state_after": {
+            "station_name": null,
+            "departure_limit": null
+          },
+          "expected_calls": [],
+          "expected_facts": {},
+          "expected_http_counts": [
+            0,
+            0
+          ],
+          "required_response_notes": [
+            "Ask for the station again after reset."
+          ],
+          "prohibited_claims": [
+            "Richmond remains selected after reset.",
+            "Previous departure records are current data for this turn."
+          ],
+          "expected_answer": "Which Melbourne train station would you like departures from?"
+        }
+      ]
+    }
+  ]
+}

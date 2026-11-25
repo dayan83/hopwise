@@ -19,9 +19,10 @@ logic also works without an LLM.
 
 | Area | Evidence |
 | --- | --- |
-| Automated verification | **480 offline tests passed** in the latest local full-suite run |
+| Automated verification | **555 offline tests passed** in the latest local full-suite run |
 | Agent evaluation | **14 single-turn golden cases**, dataset **v0.3.0**, with a fully reviewed real-LLM baseline |
 | Conversation continuity | Station/count follow-ups implemented, tested offline and manually checked through tool executions |
+| Multi-turn evaluation | Five scripted offline scenarios covering eight turns, including reset and session-isolation checks |
 | Latest passenger presentation | Deterministic minute rounding implemented; exact timing diagnostics retained; newer model-run review pending |
 
 This is a working local prototype. The single-turn benchmark does not establish
@@ -176,6 +177,8 @@ instruction in a notice, and directly associated versus contextual notices.
 | Activity | LLM | PTV data | Purpose |
 | --- | --- | --- | --- |
 | `uv run --offline --frozen pytest -q` | Scripted | Mocked/fixture-backed | Verify implementation offline |
+| `uv run --offline --frozen python -m evals.multiturn --all` | Scripted | Fixed fixtures | Check five conversation scenarios and per-turn retrieval |
+| `uv run python -m evals.multiturn --real-llm --all` | Real, explicit opt-in | Fixed fixtures | Evaluate follow-ups and refreshed answer facts; manual review required |
 | `uv run python -m evals.run --all` | Real | Fixed fixtures | Observe model behaviour reproducibly |
 | `uv run python -m evals.checks --run-dir evals/results/<run_id>` | None | Saved records | Score objective checks and aggregate manual labels |
 

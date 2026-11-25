@@ -235,6 +235,213 @@ into the original result and fixture. Requested calls may differ from executed
 calls after validation failures. Fixture misses can interrupt execution before
 a tool result is recorded, so inspect requested calls and coverage together.
 
+## Multi-turn suite
+
+The separate [multi-turn dataset](../evals/multiturn_dataset.json), version `0.1.0`,
+contains five scenarios and eight turns. It does not replace the fourteen-case
+single-turn dataset or change its runner, scoring semantics, saved runs or labels.
+
+| Scenario | Turn-level expectation |
+| --- | --- |
+| `retain_station_context` | Resolve Richmond, then revalidate it and fetch at most two new services |
+| `change_station` | Switch from Richmond to a newly resolved Flinders Street stop |
+| `follow_up_without_context` | Ask for a station without making any PTV request |
+| `ambiguous_station` | Search Rich, then clarify among the returned matches without fetching departures |
+| `reset_conversation` | Clear station/count preferences before the follow-up and ask for the station again |
+
+Run the complete suite without API keys or API costs:
+
+```sh
+uv run --offline --frozen python -m evals.multiturn --all
+```
+
+Or select one scenario:
+
+```sh
+uv run --offline --frozen python -m evals.multiturn --scenario retain_station_context
+```
+
+The default CLI uses independently authored responses from
+[multiturn_scripts.json](../evals/multiturn_scripts.json). Scripted mode never
+constructs a real OpenAI client or loads environment credentials, even when keys
+and a model are already configured. These protocol replies are
+not generated from golden expected calls, and their final answers are not evidence
+of real-model quality. Programmatic evaluations can still inject a
+`client_factory(scenario_id, turn_id)` and explicit model.
+
+### Explicit real-LLM mode
+
+Only `--real-llm` enables real OpenAI requests, using the existing Responses tool
+loop. This mode loads `.env` without overriding existing environment values and
+requires `OPENAI_API_KEY` plus `OPENAI_MODEL` or `--model`. Passing `--model` alone
+is rejected. No new models or PTV credentials are configured by the runner.
+
+```sh
+# Calls OpenAI and incurs API costs; all PTV responses remain fixed fixtures.
+uv run python -m evals.multiturn --real-llm --all
+
+# One scenario, with an explicit model available to your OpenAI project.
+uv run python -m evals.multiturn --real-llm --scenario retain_station_context --model <model-id>
+```
+
+These commands have not been run against the real API as part of implementing
+this increment. Tests exercise the same CLI path with a fake SDK client.
+The SDK client uses a 30-second timeout and no automatic retries. Reusing its HTTP
+connection does not share model history: each turn receives the actual current
+question and only that scenario's station/count preferences. The agent uses
+`store=False`, without server-side conversation continuation.
+
+The runner creates one `ConversationState` per scenario, preserves it between
+that scenario's turns, and invokes its actual `reset()` method when specified.
+Each turn has a fresh `FixtureTransport`, a fixed reference-time scope, a new
+`AgentTrace` and the existing `RecordingClient` with a small input-recording extension.
+The extension captures the question and station/count preferences actually sent
+to the model, not just the state object outside the model call.
+
+Three existing PTV fixtures are reused unchanged. The new
+[Richmond follow-up fixture](../evals/multiturn_fixtures/richmond_followup_two.json)
+changes the reference time, run IDs, departure times and a platform. Golden facts
+were authored separately and timestamp arithmetic is independently tested.
+For no-request turns, existing fixture definitions are dormant: all HTTP match
+counts must be zero. They provide the safe transport and clock scope, not permission
+to invent a station. Any unexpected request fails either fixture matching or the
+zero-request check; there is no network fallback.
+
+Freshness requires observed HTTP matches on that turn's transport, the expected
+limit/station arguments, the current retrieval timestamp and the expected records.
+A tool trace alone, a new timestamp alone, or an old board paired with apparent
+HTTP activity does not pass. Identical timestamps across two distinct station
+fixtures are allowed; actual HTTP evidence remains necessary.
+
+Per-turn mechanical checks reuse `evals.checks.score_case()` without modifying it.
+Additional checks verify before/after/reset states, state continuity, the initial
+model input, session separation, exact HTTP counts, returned limits and current
+run identities. Clarification turns use explicit, narrow contracts for the
+application's deterministic clarification messages; this is not a general
+natural-language accuracy metric. Automated checks leave manual answer-quality
+fields unfilled.
+
+Real-LLM mode additionally enables independent final-answer coverage checks in
+[multiturn_answer_checks.py](../evals/multiturn_answer_checks.py). They recognize
+labelled service sentences, indented Markdown service blocks and simple tables, comparing each
+destination's scheduled/estimated Melbourne time and platform against existing
+golden facts. Recognized service counts must match the returned golden board.
+Numbered/bulleted headings are joined to their indented timing details before
+extraction. Emphasis is removed, while service boundaries are preserved. ISO date
+prefixes and timezone suffixes are supported; supplied dates and timezone offsets
+are checked against the expected Melbourne-local timestamp as well as its clock.
+Explicit notice sections are separate from service rows, so a notice's reference
+to a departure time is not counted as an extra train. Unknown time-bearing service
+items are retained for review rather than silently discarded.
+The station must be mentioned. Clarifications retain their existing deterministic
+contracts. The second Richmond answer must include the changed facts for the two
+new runs, including estimated 10:00, scheduled 09:59 and platform 8 for Glen
+Waverley, and estimated/scheduled 10:03 with platform 10 for Belgrave.
+
+Tool/state checks and answer coverage are reported separately. Correct tools
+paired with an old or incomplete answer fail the answer checks, even when the
+turn completed without errors. Scripted mode keeps its original orchestration
+checks; its brief protocol answers are not graded as model-generated prose.
+New reports use schema version 2 and checks version 3. The dataset and original expectations
+are unchanged, and earlier reports retain their original version and meaning.
+
+Each answer and individual check now has a status:
+
+- `verified`: the recognized facts match the golden values.
+- `factual_mismatch`: parsed facts or understood service counts contradict the golden values.
+- `unrecognized_format`: required facts cannot be reliably extracted and need manual review.
+
+Both mismatch and unrecognized statuses leave `passed` false; uncertainty is never
+converted into an automatic pass. A known mismatch takes precedence over any
+unrecognized fields elsewhere in the same answer.
+
+These checks establish only coverage of recognized, associated facts. They do not
+prove full factual accuracy or grounding, detect every invented statement, or
+judge disruption relevance. Unrecognized formats, arbitrary service prose or
+valid alternate wording can fail coverage and need human inspection. Run IDs
+prove tool-record freshness; commuters need not see them in the final answer.
+
+Reports are saved separately under the existing Git-ignored results root:
+
+```text
+evals/results/multiturn/<run_id>/
+  summary.json
+  scenarios/<scenario_id>/result.json
+  reviews.csv
+  review_summary.json           # created after summarizing manual labels
+```
+
+Each scenario result contains its session ID and initial state, then each turn's
+question, answer, state transitions, requested calls, sanitized executed calls and
+arguments in `execution_trace.tool_calls`, model metadata, fixture coverage,
+duration and controlled errors. Its `checks` contain expected/actual values,
+separate orchestration/answer results and the reused mechanical reports. The
+summary records scenario outcomes, turn errors, fixture misses, isolation checks,
+dataset/script/prompt/tool-schema hashes, requested and returned model identifiers,
+OpenAI SDK version and aggregate token usage. Per-turn fixture IDs and hashes
+identify the exact inputs. Missing usage remains null with reporting-coverage
+counts. A model snapshot/version is known only if returned by the API; it is never
+inferred from an alias.
+Failures are retained and remaining turns/scenarios continue.
+
+### Rescore an existing run without API calls
+
+```sh
+uv run --offline --frozen python -m evals.multiturn_checks --run-dir evals/results/multiturn/20261125T044339Z_82968bc12515
+```
+
+This reads saved answers, traces and state transitions, verifies dataset/fixture
+hashes and applies the current checks. It neither executes the agent nor imports
+an API client. Results go to a fresh
+`<run_dir>/rescores/<rescore_id>/summary.json`, with per-scenario check reports and
+source hashes. Original outputs, automated scores, review CSV and manual labels
+are preserved. New reports retain the original metrics for comparison.
+
+For run `20261125T044339Z_82968bc12515`, the original v2 checker evaluated each
+line separately and expected a clock immediately after a time label. It discarded
+service headings without clocks and timing lines without destinations/platforms;
+ISO dates before the clock also prevented label extraction. Bold text itself was
+already supported. These parser defects explain all five departure-answer failures.
+Offline rescoring with v3 verifies 8/8 turns and 5/5 scenarios, compared with the
+original 3/8 and 2/5. Orchestration remains 5/5. This corrects recognition of the
+same saved answers; it is not a new model evaluation or an agent improvement.
+
+### Manual review of final answers
+
+Each new run includes `reviews.csv`, one row per turn. Leave scores blank until
+review, then enter 0, 1 or 2 in `manual_factual_accuracy`, `manual_grounding` and
+`manual_response_relevance`, with `reviewer_notes`. Use 2 for accurate/supported/
+relevant, 1 for partial quality or minor issues, and 0 for major errors, unsupported
+claims or an irrelevant answer. Review the whole answer against its golden facts,
+required notes, prohibited claims, state transitions and the tool evidence.
+The CSV carries the existing rubric's field names and review guidance.
+
+After editing the CSV, summarize labels fully offline:
+
+```sh
+uv run --offline --frozen python -m evals.multiturn --review-run evals/results/multiturn/<run_id>
+```
+
+This validates labels using the existing scorer's review loader and writes
+`review_summary.json` with per-dimension means and coverage over all attempted
+turns. Blank scores stay unreviewed; they are not counted as zero. The original
+execution records and automated checks remain unchanged. This command does not
+rerun the agent, load API credentials or call either API.
+
+Run the focused offline regression tests:
+
+```sh
+uv run --offline --frozen pytest -q tests/test_multiturn_evaluation.py tests/test_multiturn_real_evaluation.py tests/test_multiturn_answer_recognition.py
+```
+
+They block live network transports and substitute fake clients/configuration when
+testing real-mode orchestration. Default-mode tests reject any SDK construction
+or credential loading.
+Negative tests deliberately remove retrieval evidence, substitute stale boards,
+alter station/limit arguments, skip resets and simulate session leakage. They also
+pair fresh successful tools with stale final prose and reject swapped service
+facts, missing times, wrong platforms and extra recognized services.
+
 ## Reviewed nine-case historical baseline
 
 The [baseline snapshot](baseline-summary.json) is a compact export of the existing

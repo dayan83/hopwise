@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "script_version": "0.1.0",
+  "description": "Fixed LLM protocol responses, authored separately from golden expectations. This tests orchestration, not real-model language understanding.",
+  "scenarios": {
+    "retain_station_context": {
+      "1": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Richmond"
+          }
+        },
+        {
+          "tool": "get_departures_with_disruptions",
+          "arguments": {
+            "stop_id": 1101,
+            "limit": 5
+          }
+        },
+        {
+          "answer": "Richmond: estimated departures at 09:58, 10:02 and 10:06 AEDT; each estimate matches its schedule without guaranteeing operation."
+        }
+      ],
+      "2": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Richmond"
+          }
+        },
+        {
+          "tool": "get_departures_with_disruptions",
+          "arguments": {
+            "stop_id": 1101,
+            "limit": 2
+          }
+        },
+        {
+          "answer": "Richmond: Glen Waverley estimated 10:00 AEDT (scheduled 09:59), platform 8, about 1 minute late. Belgrave estimated and scheduled 10:03 AEDT, platform 10."
+        }
+      ]
+    },
+    "change_station": {
+      "1": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Richmond"
+          }
+        },
+        {
+          "tool": "get_departures_with_disruptions",
+          "arguments": {
+            "stop_id": 1101,
+            "limit": 5
+          }
+        },
+        {
+          "answer": "Richmond: three fixture-backed departures were retrieved."
+        }
+      ],
+      "2": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Flinders Street"
+          }
+        },
+        {
+          "tool": "get_departures_with_disruptions",
+          "arguments": {
+            "stop_id": 1102,
+            "limit": 5
+          }
+        },
+        {
+          "answer": "From Flinders Street: Glen Waverley estimated and scheduled at 10:00 AEDT, platform 3. Planned notice 5101 describes overnight works; impact on this morning departure is not established."
+        }
+      ]
+    },
+    "follow_up_without_context": {
+      "1": [
+        {
+          "answer": "Which Melbourne train station would you like departures from?"
+        }
+      ]
+    },
+    "ambiguous_station": {
+      "1": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Rich"
+          }
+        }
+      ]
+    },
+    "reset_conversation": {
+      "1": [
+        {
+          "tool": "search_stations",
+          "arguments": {
+            "query": "Richmond"
+          }
+        },
+        {
+          "tool": "get_departures_with_disruptions",
+          "arguments": {
+            "stop_id": 1101,
+            "limit": 5
+          }
+        },
+        {
+          "answer": "Richmond: three fixture-backed departures were retrieved."
+        }
+      ],
+      "2": [
+        {
+          "answer": "Which Melbourne train station would you like departures from?"
+        }
+      ]
+    }
+  }
+}

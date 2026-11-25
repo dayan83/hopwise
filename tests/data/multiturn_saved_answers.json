@@ -1,0 +1,46 @@
+{
+  "source_run_id": "20261125T044339Z_82968bc12515",
+  "description": "Sanitized final-answer text copied verbatim for offline parser regressions; no model calls.",
+  "answers": [
+    {
+      "scenario_id": "retain_station_context",
+      "turn_id": "1",
+      "answer": "Next trains from **Richmond**:\n\n1. **Glen Waverley** — Platform **9**  \n   Estimated departure: 2026-11-18 09:58:00 AEDT; scheduled departure: 2026-11-18 09:58:00 AEDT.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n2. **Belgrave** — Platform **10**  \n   Estimated departure: 2026-11-18 10:02:00 AEDT; scheduled departure: 2026-11-18 10:02:00 AEDT.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n3. **Lilydale** — Platform **10**  \n   Estimated departure: 2026-11-18 10:06:00 AEDT; scheduled departure: 2026-11-18 10:06:00 AEDT.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\nNo directly associated disruption notices were returned for these departures."
+    },
+    {
+      "scenario_id": "retain_station_context",
+      "turn_id": "2",
+      "answer": "Next two departures from Richmond:\n\n1. Glen Waverley line to Glen Waverley — Platform 8  \n   Estimated departure: 2026-11-18 10:00:00 AEDT; scheduled departure: 2026-11-18 09:59:00 AEDT.  \n   About 1 minute late (estimated).  \n   No directly associated disruption notices.\n\n2. Belgrave line to Belgrave — Platform 10  \n   Estimated departure: 2026-11-18 10:03:00 AEDT; scheduled departure: 2026-11-18 10:03:00 AEDT.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.  \n   No directly associated disruption notices."
+    },
+    {
+      "scenario_id": "change_station",
+      "turn_id": "1",
+      "answer": "Next trains from **Richmond**:\n\n1. **Glen Waverley** — platform **9**  \n   Estimated departure: **2026-11-18 09:58:00 AEDT**; scheduled departure: **2026-11-18 09:58:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n2. **Belgrave** — platform **10**  \n   Estimated departure: **2026-11-18 10:02:00 AEDT**; scheduled departure: **2026-11-18 10:02:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n3. **Lilydale** — platform **10**  \n   Estimated departure: **2026-11-18 10:06:00 AEDT**; scheduled departure: **2026-11-18 10:06:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\nNo directly associated disruption notices were returned for these departures."
+    },
+    {
+      "scenario_id": "change_station",
+      "turn_id": "2",
+      "answer": "From **Flinders Street Station**, I found this upcoming retrieved departure:\n\n- **Glen Waverley line to Glen Waverley** — **Platform 3**  \n  **Estimated departure: 2026-11-18 10:00:00 AEDT; scheduled departure: 2026-11-18 10:00:00 AEDT.**  \n  Delay info: **The estimate matches the schedule; this is not a guarantee of on-time operation.**\n\nDirectly associated notice:\n- **Planned — Glen Waverley line: late-night replacement buses**  \n  “Buses replace trains between Richmond and Glen Waverley from 10 pm to 4 am on the nights of 18 and 19 November 2026 due to track works. Allow extra travel time.”  \n  The notice is associated with this service, but its listed affected stops are **Richmond** and **Glen Waverley**, not Flinders Street. Interpreting the notice text only, this **10:00:00 AEDT** departure is outside the stated **10 pm–4 am** replacement-bus hours; actual impact remains uncertain from the retrieved data.\n\nNo broader contextual notices were returned."
+    },
+    {
+      "scenario_id": "follow_up_without_context",
+      "turn_id": "1",
+      "answer": "Which Melbourne train station would you like departures from?"
+    },
+    {
+      "scenario_id": "ambiguous_station",
+      "turn_id": "1",
+      "answer": "Which station do you mean: Richmond (Richmond); East Richmond (Cremorne); West Richmond (Richmond)? Please give the station name."
+    },
+    {
+      "scenario_id": "reset_conversation",
+      "turn_id": "1",
+      "answer": "Next trains from **Richmond**:\n\n1. **Glen Waverley** — platform **9**  \n   Estimated departure: **2026-11-18 09:58:00 AEDT**; scheduled departure: **2026-11-18 09:58:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n2. **Belgrave** — platform **10**  \n   Estimated departure: **2026-11-18 10:02:00 AEDT**; scheduled departure: **2026-11-18 10:02:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\n3. **Lilydale** — platform **10**  \n   Estimated departure: **2026-11-18 10:06:00 AEDT**; scheduled departure: **2026-11-18 10:06:00 AEDT**.  \n   The estimate matches the schedule; this is not a guarantee of on-time operation.\n\nNo directly associated disruption notices were returned for these departures."
+    },
+    {
+      "scenario_id": "reset_conversation",
+      "turn_id": "2",
+      "answer": "Which Melbourne train station would you like departures from?"
+    }
+  ]
+}
