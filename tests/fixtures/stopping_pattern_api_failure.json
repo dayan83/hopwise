@@ -1,0 +1,39 @@
+{
+  "scenario_id": "synthetic_pattern_api_failure",
+  "synthetic": true,
+  "as_of_utc": "2026-11-17T22:55:00Z",
+  "boarding_departure": {
+    "stop_id": 1101,
+    "route_id": 2101,
+    "run_ref": "synthetic-GW-error",
+    "direction_id": 4101,
+    "scheduled_departure_utc": "2026-11-17T22:58:00Z",
+    "estimated_departure_utc": null,
+    "platform_number": "9",
+    "disruption_ids": []
+  },
+  "responses": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v3/pattern/run/synthetic-GW-error/route_type/0",
+        "query": {
+          "expand": [
+            "1",
+            "3"
+          ],
+          "include_skipped_stops": "true",
+          "include_geopath": "false",
+          "include_advertised_interchange": "false",
+          "date_utc": "2026-11-17T22:58:00+00:00"
+        }
+      },
+      "response": {
+        "status_code": 503,
+        "body": {
+          "message": "Synthetic PTV timetable service temporarily unavailable."
+        }
+      }
+    }
+  ]
+}

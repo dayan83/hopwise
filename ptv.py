@@ -13,7 +13,7 @@ import httpx
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from models import Departure, DeparturesResponse, Disruption
+from models import Departure, DeparturesResponse, Disruption, PatternRun, PatternStop, StoppingPattern
 
 
 @dataclass(frozen=True)
@@ -176,6 +176,73 @@ def _expanded_lookup(records, identifier: str) -> dict[str, dict]:
         record_id = record.get(identifier)
         lookup[str(record_id if record_id is not None else key)] = record
     return lookup
+
+
+def get_stopping_pattern(run_ref: str, route_type: int = 0, *, date_utc: datetime | None = None,
+                         config: PTVConfig | None = None,
+                         transport: httpx.BaseTransport | None = None) -> StoppingPattern:
+    """Fetch a whole run's pattern, including explicit skipped-stop information.
+
+    run_ref comes from departures, not the deprecated numeric run_id. No stop_id
+    filter is applied. Response order is retained; consumers order by
+    departure_sequence. date_utc can bind the lookup to the departure's date/time.
+    """
+    if (not isinstance(run_ref, str) or not run_ref.strip() or run_ref != run_ref.strip()
+            or run_ref in {".", ".."} or any(ord(char) < 32 or ord(char) == 127 for char in run_ref)):
+        raise ValueError("run_ref must be a nonempty run reference without surrounding whitespace or control characters")
+    if type(route_type) is not int or route_type < 0:
+        raise ValueError("route_type must be a nonnegative integer")
+    params: dict[str, str | list[str]] = {
+        "expand": ["1", "3"],  # Stop and Run; no geometry or interchange expansion.
+        "include_skipped_stops": "true", "include_geopath": "false",
+        "include_advertised_interchange": "false",
+    }
+    if date_utc is not None:
+        if not isinstance(date_utc, datetime) or date_utc.tzinfo is None or date_utc.utcoffset() is None:
+            raise ValueError("date_utc must be a timezone-aware datetime")
+        date_utc = date_utc.astimezone(timezone.utc)
+        params["date_utc"] = date_utc.isoformat()
+    payload = _get_json(f"/v3/pattern/run/{quote(run_ref, safe='')}/route_type/{route_type}",
+                        config, params=params, transport=transport)
+    try:
+        if not isinstance(payload, dict):
+            raise ValueError
+        stops = payload.get("stops")
+        parsed_stops = None
+        if stops is not None:
+            if not isinstance(stops, dict):
+                raise ValueError
+            parsed_stops = {}
+            for key, record in stops.items():
+                if not str(key).isdecimal() or str(int(key)) != str(key) or not isinstance(record, dict):
+                    raise ValueError
+                stop = PatternStop.model_validate(record)
+                if int(key) <= 0 or (stop.stop_id is not None and stop.stop_id != int(key)):
+                    raise ValueError
+                parsed_stops[int(key)] = stop
+        runs = payload.get("runs")
+        run = None
+        if runs is not None:
+            if not isinstance(runs, dict):
+                raise ValueError
+            for key, record in runs.items():
+                if not isinstance(record, dict):
+                    raise ValueError
+                parsed_run = PatternRun.model_validate(record)
+                if parsed_run.run_ref is not None and parsed_run.run_ref != key:
+                    raise ValueError
+                if key == run_ref:
+                    run = parsed_run
+        status = payload.get("status")
+        if status is not None and not isinstance(status, dict):
+            raise ValueError
+        return StoppingPattern(run_ref=run_ref, route_type=route_type, date_utc=date_utc,
+                               departures=payload.get("departures"), stops=parsed_stops, run=run,
+                               health=status.get("health") if status else None)
+    except (ValidationError, ValueError, TypeError):
+        pass
+    # As elsewhere in the client, model diagnostics never expose API input/URLs.
+    raise PTVRequestError("PTV returned invalid stopping pattern data")
 
 
 def _get_departures_payload(stop_id: int, route_type: int, max_results: int, *,

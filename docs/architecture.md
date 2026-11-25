@@ -14,6 +14,8 @@ own authentication, departure matching or HTTP implementation.
 | [models.py](../models.py) | Validate structured records and normalize aware timestamps to UTC |
 | [departure_service.py](../departure_service.py) | Match notices, share fallback lookups and interpret timing/relevance |
 | [departure_presentation.py](../departure_presentation.py) | Format passenger wording from already calculated delay seconds |
+| [stopping_pattern_service.py](../stopping_pattern_service.py) | Verify destination stops and order for a run; service layer only, not connected to agent/UI |
+| [destination_service.py](../destination_service.py) | Bound candidate/pattern lookups, exclude past departures and return confirmed destination matches with unknown outcomes |
 | [agent_tools.py](../agent_tools.py) | Validate tool arguments and serialize service results for the LLM |
 | [agent.py](../agent.py) | Execute the bounded Responses API tool-calling loop |
 | [agent_trace.py](../agent_trace.py) | Capture optional sanitized execution snapshots |
@@ -82,6 +84,247 @@ No extra route calls are made merely to collect broader context.
 `disruption_ids=None` means association data was omitted; `[]` means no IDs were
 listed. Empty data does not become a network-wide all-clear. Failed API requests
 remain errors rather than being converted to successful empty results.
+
+## Stopping patterns and destination evidence
+
+This increment adds a Python service foundation; destination-specific questions
+are not yet exposed through the agent's tools or Streamlit.
+
+`ptv.get_stopping_pattern(run_ref, route_type=0, date_utc=...)` calls
+`GET /v3/pattern/run/{run_ref}/route_type/{route_type}` using the existing signing,
+HTTP transport and safe error handling. `run_ref` is the string preserved on each
+`Departure`, not the deprecated numeric `run_id`. The request expands stops and
+runs, includes skipped stops, and does not filter by `stop_id` or request geometry
+or interchange data. This keeps the evidence scoped to the selected run.
+
+The [official PTV documentation](https://timetableapi.ptv.vic.gov.au/swagger/ui/index)
+defines `departure_sequence` as chronological order, with potentially
+non-consecutive values. `PatternDeparture` extends the existing departure model
+with that sequence, flags and ordered `skipped_stops`. `PatternStop` stores stop
+IDs/names and optional physical `stop_sequence`; physical stop order is not used
+as a replacement for chronological departure order. `PatternRun` retains identity
+and final-stop metadata. `StoppingPattern` preserves optional/missing data and
+the requested scope. All parsed times remain aware UTC values.
+
+`stopping_pattern_service.verify_destination(pattern, boarding_stop_id,
+destination_stop_id, departure=...)` is pure deterministic logic:
+
+1. Validate run/route identity and unambiguous stop and departure sequences.
+2. Sort by ascending `departure_sequence`, never by response order or by counting
+   adjacent sequence numbers. Locate the boarding stop by ID.
+3. When supplied, match the source departure's scheduled timestamp, run, stop,
+   route and direction. A different trip date or identity remains unknown.
+4. Confirm `served` only for an actual departure record at the destination with
+   a strictly greater sequence. Stop metadata, route names, final-destination
+   names and skipped-stop entries alone never establish service.
+5. Before concluding `not_served`, require a matching expanded run whose stated
+   final stop is the last departure, and expanded stop IDs fully accounted for
+   by departures or explicit skips. Distinguish an earlier/same stop, a skipped
+   destination and an absent destination using reason codes.
+
+`get_destination_verification(departure, destination_stop_id, ...)` combines one
+pattern request with this check, using the source scheduled time as `date_utc`.
+It returns a typed `DestinationVerification` with status, reason, run/stop IDs and
+available sequence evidence. PTV failures or invalid response bodies become
+`unknown: pattern_unavailable`; empty patterns are also unknown. Invalid caller
+destination IDs raise `ValueError` before any request. The lower-level client
+continues to raise credential-safe `PTVRequestError` for HTTP/parsing failures.
+
+Missing stop expansion or endpoint metadata can prevent a negative conclusion
+while leaving explicit positive departure evidence usable. Missing identities or
+sequences, repeated stop visits, tied sequences, inconsistent modes and an offline
+API status stay unknown. Contradictory served/skipped occurrences are not resolved
+by choosing the first match. Explicit drop-off-only boarding or pick-up-only
+destination flags also remain unknown for passenger use. Skipped entries describe
+non-stopping locations; they are not evidence that a train has physically passed
+them already. No new delay or cancellation claims are inferred.
+
+PTV exposes no completeness flag in this response. Endpoint/coverage checks detect
+observable incompleteness, but cannot prove that the upstream feed omitted
+nothing. No guarantee of actual train operation, accessibility or full passenger
+eligibility is made. This implementation has been validated with synthetic HTTP
+fixtures, not a live stopping-pattern contract check.
+
+For the next increment, resolve both station names with the existing search,
+retrieve a bounded departure sample and check each distinct run once. Reuse a
+parsed pattern for multiple checks within the same request; key any cache by run,
+mode and departure date/occurrence, with explicit freshness limits. Five distinct
+candidates can add five PTV HTTP calls. Bound the work, preserve unknown results,
+and consider bounded concurrency/connection reuse only when integrating the
+feature. A small candidate sample cannot prove no suitable service exists later.
+
+Run the focused tests without either API:
+
+```sh
+uv run --offline --frozen pytest -q tests/test_stopping_patterns.py
+```
+
+### Explicit live stopping-pattern smoke test
+
+To check the real PTV response contract manually, configure the existing PTV
+variables in `.env`, then run:
+
+```sh
+uv run python smoke_stopping_pattern.py --live
+```
+
+The flag is required before credentials are loaded. Importing the script,
+running `--help`, or omitting `--live` never sends requests. No OpenAI client is
+used. The diagnostic resolves an exact metropolitan Richmond match, requests
+at most three departures, selects the first usable upcoming record and fetches
+one stopping pattern using its scheduled UTC timestamp. At most three PTV HTTP
+requests are made. It does not retry with an altered date filter or select a
+different run to hide a pattern mismatch.
+
+Output includes station/run IDs, UTC and Melbourne scheduled times, departure
+and expanded-stop counts, first/last stops, and boarding/downstream records in
+`departure_sequence` order. Explicit skips are labelled as non-stopping entries.
+Missing identifiers, sequences and names, repeated stops, inconsistent identities,
+boarding timestamp mismatches and endpoint/coverage discrepancies are reported.
+Possible date-filtering or truncation problems remain qualified observations,
+not diagnoses of their cause. Malformed responses rejected by the existing client
+produce a safe error; raw payloads, signed URLs and credentials are not printed.
+
+The first later listed stop is verified with `verify_destination()` using the
+same fetched pattern. A separate negative-coverage control checks the boarding
+stop against itself: with unique stops it cannot occur strictly after itself.
+Its expected `not_served (destination_not_after_boarding)` result exercises the
+existing endpoint/coverage guard without inventing a destination ID. An `unknown`
+control means missing destinations must not be treated as confirmed absences.
+No matching/completeness rules are reimplemented in the script.
+
+Exit codes are **0** for a verified positive probe, **1** for configuration or
+request/parsing failure, and **2** for an inconclusive attempt (ambiguity, no
+usable departure, no later stop or an unknown probe). Read coverage warnings
+even after exit 0: a positive stop can be established while negative coverage
+remains unknown. All conclusions describe returned evidence, not guaranteed
+train operation. This command was tested offline during implementation; a real
+PTV execution remains a deliberate manual step.
+
+Offline command tests use synthetic HTTP fixtures and block credential loading,
+live HTTP transports and OpenAI construction:
+
+```sh
+uv run --offline --frozen pytest -q tests/test_smoke_stopping_pattern.py
+```
+
+## Destination-aware departure service
+
+This Python service is not yet connected to agent tools or the UI. Its callers
+must resolve and disambiguate both stations before supplying positive stop IDs.
+The new service does not resolve station names or infer service from route names
+or final-destination labels.
+
+```python
+from destination_service import get_departures_to_destination
+
+result = get_departures_to_destination(
+    origin_stop_id, destination_stop_id, limit=3,
+    candidate_limit=20, max_pattern_requests=10,
+    config=config,
+)
+```
+
+`get_departures_with_disruptions()` supplies one bounded typed origin board.
+The new service retains its departures, directly associated notices, unresolved
+IDs, contextual notices and route notices. Each usable upcoming candidate is
+checked with the existing pattern client and `verify_destination()`; deterministic
+matching rules are not rewritten. Raw timestamps, platforms and run/route names
+remain intact. Candidate timing fields reuse `departure_delay()`, `interpret_delay()`
+and `passenger_delay_description()` without changing their calculations or wording.
+
+The return type is `DestinationDepartureBoard`:
+
+| Field | Meaning |
+| --- | --- |
+| `matches` | Up to the requested number of unique, confirmed, still-upcoming services, ordered by best available departure time |
+| `candidates` | All examined records, with source departure/notices, verification status/reason, time source, upcoming status and exclusions |
+| `metadata` | Received/examined counts, budgets, pattern attempts/successes/cache hits, unique confirmed counts, unknowns and exclusions |
+| `started_at_utc`, `checked_at_utc` | Aware UTC clock snapshots; final eligibility uses the latter |
+| `status`, `reason` | `ok`, `partial` or `unavailable`, plus a bounded-search explanation |
+| `contextual_notices`, `route_notices` | Existing broader notice categories, not proof of individual-train impact |
+
+### Upcoming time and ordering
+
+A validated real-time estimate takes precedence over the schedule, including an
+early estimate. If no estimate exists, use the scheduled time and preserve the
+missing estimate as null. If neither time exists, the candidate is unverifiable
+and costs no pattern request. Missing run/boarding identity or missing scheduled
+time also prevents a pattern lookup from being tied to the selected departure.
+
+For the live-smoke observation, a 17:00 scheduled train can still be considered
+upcoming at 17:01:59 only if its available estimate is at or after 17:01:59. The
+schedule alone cannot establish why that live record qualified. Without a usable
+future estimate, the past schedule is excluded. A past estimate is not replaced
+by a later schedule to make the train appear upcoming.
+
+The service accepts a `clock` callable returning an aware datetime; tests inject
+fixed values. It reads the clock before retrieval and again before returning,
+normalizes both to UTC and rejects backward/naive clock values. Any candidate
+whose best time is strictly before the final snapshot is excluded, even if pattern
+retrieval confirmed its stopping pattern. Equality is eligible, not a guarantee
+that boarding is possible. No actual train position is inferred. Matches are
+chronological among confirmed services in the inspected window; unknown earlier
+candidates may also serve the destination.
+
+### Bounds, cache and failure semantics
+
+Default limits are 3 matches, 20 candidate records and 10 pattern attempts. Hard
+input caps are 10 matches, 50 candidates and 20 pattern attempts; zero pattern
+attempts is allowed and yields explicit unknowns. Requested matches may exceed
+the candidate window. Inputs are checked before credentials or HTTP are used.
+There is no pagination, repeated origin lookup or automatic retry to fill a count.
+
+Patterns are cached only inside the request using `(run_ref, route_type,
+scheduled_departure_utc)`. The full timestamp includes the service date and
+distinguishes reused run references even within a day. Every candidate is still
+verified against its own boarding record. Failed attempts are cached too, consume
+the budget and never become `not_served`. Cache hits remain usable after the
+request budget is exhausted. Identical duplicate departure records do not count
+as independent trains; conflicting records for the same origin/run/instant are
+unverifiable rather than arbitrarily choosing a platform or estimate.
+
+`candidates_examined` counts all records inspected within the candidate cap,
+including past, duplicate and unknown records. `pattern_requests` counts attempted
+client lookups, including errors; actual pattern HTTP calls cannot exceed it.
+`patterns_fetched` counts successfully parsed responses, even if verification
+later finds them incomplete. Confirmed counts omit past/duplicate exclusions;
+`unknown_verifications` counts unexcluded unverifiable candidates. Matching
+records beyond the requested return count remain inspectable in `candidates`.
+
+`candidate_limit_reached` means the source filled the candidate window, not that
+additional trains are known to exist. `pattern_request_limit_reached` records
+budget attainment; `pattern_budget_skips` identifies candidates actually blocked.
+`search_limit_reached` means the candidate window filled or a pattern lookup was
+blocked. Such bounds or any unexcluded unknown make the result `partial`, even
+when enough confirmed matches were found.
+
+Empty/short results have explicit reasons: `no_candidates_returned`,
+`no_upcoming_candidates`, `no_confirmed_matches_within_search`,
+`no_confirmed_matches_unverifiable` or `fewer_confirmed_matches_within_search`.
+These reasons describe only the inspected window. An individual pattern failure leaves
+other matches available and its candidate unknown. A failure of the existing source
+board loader (including a required disruption fallback) returns `unavailable` /
+`departure_board_unavailable`, with `candidates_received=null`; it is not a
+successful empty timetable. Invalid source timestamps are rejected by the existing
+client rather than silently substituting schedule data. No raw API error bodies
+or authenticated URLs are copied into results.
+
+The pattern budget is not a budget for all PTV traffic: the source board adds its
+departure request and the existing deduplicated route-notice fallbacks, themselves
+bounded by the candidate count. Pattern calls are sequential in this increment,
+so use conservative bounds and inspect the final timestamp/partial status.
+
+The next agent increment should add a small adapter with current-turn provenance
+for both resolved stops, then expose the bounded service and its unknown/limit
+metadata. The current single-station conversation/search guard needs an explicit
+origin/destination design so a destination search cannot overwrite the origin.
+Add fixed tool/evaluation cases and wire the test clock before enabling this in
+the agent; the present tools, instructions, UI and historical evaluations are unchanged.
+
+```sh
+uv run --offline --frozen pytest -q tests/test_destination_service.py
+```
 
 ## Timing and relevance
 

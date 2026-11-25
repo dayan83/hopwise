@@ -19,10 +19,11 @@ logic also works without an LLM.
 
 | Area | Evidence |
 | --- | --- |
-| Automated verification | **555 offline tests passed** in the latest local full-suite run |
+| Automated verification | **703 offline tests passed** in the latest local full-suite run |
 | Agent evaluation | **14 single-turn golden cases**, dataset **v0.3.0**, with a fully reviewed real-LLM baseline |
 | Conversation continuity | Station/count follow-ups implemented, tested offline and manually checked through tool executions |
 | Multi-turn evaluation | Five scripted offline scenarios covering eight turns, including reset and session-isolation checks |
+| Destination-query service | Bounded candidate/pattern retrieval, deterministic stop verification and explicit unknown outcomes in Python; agent/UI integration remains a future increment |
 | Latest passenger presentation | Deterministic minute rounding implemented; exact timing diagnostics retained; newer model-run review pending |
 
 This is a working local prototype. The single-turn benchmark does not establish
@@ -227,6 +228,8 @@ Provenance: reviewed run `20261124T053840Z_6e246e64de05`; newer passenger-wordin
 | [models.py](models.py) | Validated departure, disruption and board models |
 | [departure_service.py](departure_service.py) | ID-based matching, delay interpretation and relevance annotations |
 | [departure_presentation.py](departure_presentation.py) | Passenger delay wording with documented minute rounding |
+| [stopping_pattern_service.py](stopping_pattern_service.py) | Run stopping-pattern evidence with served / not served / unknown destination decisions |
+| [destination_service.py](destination_service.py) | Bounded destination-aware departures with upcoming-time checks, pattern reuse and uncertainty metadata |
 | [agent_tools.py](agent_tools.py) | Strict tool schemas, validation and service adapters |
 | [agent.py](agent.py) | Bounded Responses API tool-calling loop |
 | [agent_trace.py](agent_trace.py) | Optional sanitized execution snapshots |
@@ -244,6 +247,15 @@ runs pytest on Python 3.11 on Linux and Windows. API credentials are not require
 Hopwise currently covers metropolitan trains and a limited upcoming-departure
 sample. It does not plan journeys, send alerts or establish network-wide
 disruption coverage.
+
+Stopping-pattern verification and bounded destination-aware departure retrieval
+are available in the Python service layer.
+Destination-specific questions are not yet connected to the agent or UI.
+
+For a manual live PTV contract check, run `uv run python smoke_stopping_pattern.py --live`
+with the existing PTV `.env` configuration. This requires explicit opt-in and
+does not use OpenAI. See the [diagnostic guide](docs/architecture.md#explicit-live-stopping-pattern-smoke-test)
+for output, coverage warnings and exit codes.
 
 An estimate is not an observed departure or a guarantee. A linked disruption
 does not prove that a particular train is delayed or cancelled. Date and stop
