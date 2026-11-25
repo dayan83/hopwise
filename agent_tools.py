@@ -11,6 +11,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 import departure_service
+from departure_presentation import passenger_delay_description
 import ptv
 from models import Departure, DepartureBoard, Disruption
 
@@ -87,6 +88,8 @@ def _board_output(board: DepartureBoard) -> dict:
         delay = departure_service.departure_delay(departure)
         item["departure"]["delay_seconds"] = delay.total_seconds() if delay is not None else None
         item["departure"].update(departure_service.interpret_delay(item["departure"]["delay_seconds"]))
+        item["departure"]["passenger_delay_description"] = passenger_delay_description(
+            item["departure"]["delay_seconds"])
         item["associated_disruptions"] = [
             _notice_output(notice, melbourne, boarding_stop_id=board.stop_id, departure=departure)
             for notice in entry.associated_disruptions]

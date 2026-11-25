@@ -60,7 +60,7 @@ def test_station_selection_loads_typed_departures_once(search, fetch):
     assert row.to_dict() == {
         "Scheduled": "2026-11-17 11:00:00 AEDT", "Estimated": "2026-11-17 11:02:00 AEDT",
         "Route": "Glen Waverley", "Destination": "Flinders Street", "Platform": "2",
-        "Timing": "2 min late (estimated)",
+        "Timing": "About 2 minutes late (estimated).",
         "Notices": "Association data not supplied",
     }
     timestamp = application.session_state["departures_refreshed_at"]
@@ -87,9 +87,11 @@ def test_refresh_replaces_data_and_updates_success_timestamp(search, fetch):
 
 @pytest.mark.parametrize("estimate,scheduled,expected", [
     (None, "2026-11-17T00:00:00Z", "No estimate available"),
-    ("2026-11-17T00:00:00Z", "2026-11-17T00:00:00Z", "On time (estimated)"),
-    ("2026-11-16T23:59:00Z", "2026-11-17T00:00:00Z", "1 min early (estimated)"),
-    ("2026-11-17T00:00:15Z", "2026-11-17T00:00:00Z", "15 sec late (estimated)"),
+    ("2026-11-17T00:00:00Z", "2026-11-17T00:00:00Z", "The estimate matches the schedule; this is not a guarantee of on-time operation."),
+    ("2026-11-16T23:59:00Z", "2026-11-17T00:00:00Z", "About 1 minute early (estimated)."),
+    ("2026-11-17T00:00:15Z", "2026-11-17T00:00:00Z", "Estimate is close to the schedule; timing may change."),
+    ("2026-11-17T00:02:09Z", "2026-11-17T00:00:00Z", "About 2 minutes late (estimated)."),
+    ("2026-11-16T23:59:30Z", "2026-11-17T00:00:00Z", "Slightly early (estimated)."),
     ("2026-11-17T00:00:00Z", None, "Delay unavailable (no scheduled time)"),
 ])
 def test_timing_distinguishes_missing_estimates_from_on_time(search, fetch, estimate, scheduled, expected):

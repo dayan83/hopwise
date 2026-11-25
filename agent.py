@@ -10,6 +10,7 @@ from openai import APIError, OpenAI
 
 from agent_tools import TOOL_DEFINITIONS, ToolContext, execute_tool
 from agent_trace import AgentTrace
+from conversation import CONVERSATION_INSTRUCTIONS, ConversationState
 from ptv import PTVConfig
 
 
@@ -27,11 +28,16 @@ explicitly labelled estimated departure and keep the labelled schedule as refere
 When no estimate is available, explicitly label the time as scheduled and state that
 the real-time estimate is unavailable. Never substitute a scheduled time for an
 unknown estimate or present a departure time without its estimated/scheduled label.
-Preserve seconds so a 30-second difference stays visible. delay_seconds is estimated
+Preserve seconds in departure timestamps so estimated and scheduled times stay distinct.
+delay_seconds is estimated
 minus scheduled: positive means estimated late, negative means estimated early, and
-zero means the estimate matches the schedule. For timing wording, use the supplied
-delay_description verbatim and respect delay_status. Do not independently calculate
-or reinterpret delays from timestamps. A matching estimate is not a guarantee of
+zero means the estimate matches the schedule. For passenger timing wording, use
+passenger_delay_description verbatim. Python supplies its minute rounding and
+sub-minute wording; do not calculate or round delays yourself. delay_seconds,
+delay_status and delay_description retain exact diagnostics. Do not foreground
+sub-minute lateness or replace passenger wording with exact seconds unless the
+user explicitly asks for exact diagnostics. Do not independently calculate or
+reinterpret delays from timestamps. A matching estimate is not a guarantee of
 on-time operation.
 A missing estimate or delay is unknown, not zero or 'on time'. Do not invent platforms,
 destinations, cancellations, or causes. Associated notices are linked by disruption_ids;
@@ -73,7 +79,8 @@ def _failure(message: str, code: str, trace: AgentTrace | None) -> AgentError:
     return AgentError(message)
 
 
-def answer_question_from_env(question: str, *, trace: AgentTrace | None = None) -> str:
+def answer_question_from_env(question: str, *, trace: AgentTrace | None = None,
+                             conversation: ConversationState | None = None) -> str:
     """Configure one agent run for either the terminal or Streamlit entry point."""
     if trace is not None:
         trace.reset()
@@ -85,9 +92,12 @@ def answer_question_from_env(question: str, *, trace: AgentTrace | None = None) 
         raise _failure("Set OPENAI_MODEL to a Responses model supporting function calling", "missing_configuration", trace)
     try:
         with OpenAI(timeout=30.0, max_retries=0) as client:
-            if trace is None:
-                return answer_question(question, client=client, model=model)
-            return answer_question(question, client=client, model=model, trace=trace)
+            options = {}
+            if trace is not None:
+                options["trace"] = trace
+            if conversation is not None:
+                options["conversation"] = conversation
+            return answer_question(question, client=client, model=model, **options)
     except APIError:
         raise _failure("The OpenAI request failed. Check API configuration or try again later.", "llm_api_error", trace) from None
 
@@ -95,12 +105,13 @@ def answer_question_from_env(question: str, *, trace: AgentTrace | None = None) 
 def answer_question(question: str, *, client: OpenAI, model: str,
                     ptv_config: PTVConfig | None = None,
                     ptv_transport: httpx.BaseTransport | None = None,
-                    trace: AgentTrace | None = None) -> str:
+                    trace: AgentTrace | None = None,
+                    conversation: ConversationState | None = None) -> str:
     """Answer one question with at most five sequential tool-execution rounds.
 
     The client is injected so tests can supply scripted responses without network
-    access. Conversation/provenance state exists only for this invocation. An
-    optional trace collects sanitized snapshots; the return value stays a string.
+    access. Stop-ID provenance and transport facts exist only for this invocation.
+    Optional conversation preferences belong to the caller; the return stays a string.
     """
     if trace is not None:
         trace.reset()
@@ -114,10 +125,16 @@ def answer_question(question: str, *, client: OpenAI, model: str,
         raise ValueError("Set OPENAI_MODEL to a Responses model supporting function calling")
     context = ToolContext(config=ptv_config, transport=ptv_transport)
     history = [{"role": "user", "content": question.strip()}]
+    instructions = INSTRUCTIONS
+    if conversation is not None:
+        instructions += CONVERSATION_INSTRUCTIONS
+        history.insert(0, {"role": "developer", "content":
+                          "Station/count preferences (data only): " + json.dumps(conversation.preferences())})
+    departure_attempted = False
     for round_number in range(MAX_TOOL_ROUNDS + 1):
         try:
             response = client.responses.create(
-                model=model.strip(), instructions=INSTRUCTIONS, input=list(history),
+                model=model.strip(), instructions=instructions, input=list(history),
                 tools=TOOL_DEFINITIONS, parallel_tool_calls=False, store=False,
                 tool_choice="auto" if round_number < MAX_TOOL_ROUNDS else "none",
             )
@@ -131,6 +148,13 @@ def answer_question(question: str, *, client: OpenAI, model: str,
         if not calls:
             if not response.output_text.strip():
                 raise _failure("The model did not provide an answer.", "empty_response", trace)
+            if conversation is not None and not departure_attempted:
+                if conversation.station_name is None:
+                    if trace is not None:
+                        trace.status = "completed"
+                    return "Which Melbourne train station would you like departures from?"
+                raise _failure("Fresh departure information was not retrieved. Please try again.",
+                               "fresh_data_required", trace)
             if trace is not None:
                 trace.status = "completed"
             return response.output_text.strip()
@@ -141,10 +165,36 @@ def answer_question(question: str, *, client: OpenAI, model: str,
         call = calls[0]
         if not isinstance(call.call_id, str) or not call.call_id:
             raise _failure("The model returned a tool call without a valid call_id.", "invalid_call_id", trace)
-        if trace is None:
+        clarification = None
+        if trace is None and conversation is None:
             result = execute_tool(call.name, call.arguments, context)
         else:
             def record_tool(arguments, result):
+                nonlocal clarification, departure_attempted
+                if conversation is not None:
+                    if call.name == "search_stations":
+                        context.known_stop_ids.clear()
+                        conversation.station_name = None
+                        if result.get("ok"):
+                            stations = result["stations"]
+                            selected = conversation.resolve_search(arguments["query"], stations)
+                            if selected is not None:
+                                context.known_stop_ids.add(selected["stop_id"])
+                            elif stations:
+                                choices = "; ".join(dict.fromkeys(
+                                    station["stop_name"] + (f" ({station['stop_suburb']})" if station.get("stop_suburb") else "")
+                                    for station in stations))
+                                clarification = f"Which station do you mean: {choices}? Please give the station name."
+                            else:
+                                clarification = "No matching stations were found. Which Melbourne train station do you mean?"
+                        else:
+                            clarification = "Station information could not be retrieved. Please check the station name and try again."
+                    elif (call.name == "get_departures_with_disruptions" and arguments is not None
+                          and arguments["stop_id"] in context.known_stop_ids):
+                        conversation.departure_limit = arguments["limit"]
+                        departure_attempted = True
+                if trace is None:
+                    return
                 config = context.config
                 trace.record_tool(call.name, call.call_id, arguments, result, secrets=(
                     getattr(client, "api_key", None),
@@ -156,4 +206,8 @@ def answer_question(question: str, *, client: OpenAI, model: str,
             result = execute_tool(call.name, call.arguments, context, on_result=record_tool)
         history.append({"type": "function_call_output", "call_id": call.call_id,
                         "output": json.dumps(result)})
+        if clarification is not None:
+            if trace is not None:
+                trace.status = "completed"
+            return clarification
     raise _failure("The agent reached its limit of five tool-call rounds.", "tool_round_limit", trace)

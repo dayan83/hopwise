@@ -14,6 +14,7 @@ _RESULT_FIELDS = frozenset("""
     run_ref destination_name direction_id scheduled_departure_utc
     estimated_departure_utc platform_number disruption_ids scheduled_local
     estimated_local departure_time_description delay_seconds delay_status delay_description
+    passenger_delay_description
     associated_disruptions unresolved_disruption_ids
     contextual_notices route_notices disruption_id title description
     disruption_status disruption_type from_date to_date last_updated

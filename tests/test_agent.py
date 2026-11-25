@@ -111,14 +111,19 @@ def test_complete_loop_preserves_output_items_and_call_ids(search, monkeypatch):
     }, indent=2))
 
 
-@pytest.mark.parametrize("case_id,time_description", [
+@pytest.mark.parametrize("case_id,time_description,passenger", [
     ("glen_waverley_no_estimate",
-     "Scheduled departure: 2026-11-18 10:05:00 AEDT; real-time estimate unavailable."),
+     "Scheduled departure: 2026-11-18 10:05:00 AEDT; real-time estimate unavailable.",
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
     ("richmond_30_seconds_early",
-     "Estimated departure: 2026-11-18 09:57:30 AEDT; scheduled departure: 2026-11-18 09:58:00 AEDT."),
+     "Estimated departure: 2026-11-18 09:57:30 AEDT; scheduled departure: 2026-11-18 09:58:00 AEDT.",
+     "Slightly early (estimated)."),
+    ("richmond_30_seconds_late",
+     "Estimated departure: 2026-11-18 09:58:30 AEDT; scheduled departure: 2026-11-18 09:58:00 AEDT.",
+     "Estimate is close to the schedule; timing may change."),
 ])
 def test_timing_presentation_contract_reaches_model_and_trace_from_baseline_fixtures(
-        monkeypatch, case_id, time_description):
+        monkeypatch, case_id, time_description, passenger):
     """Check data and instructions sent to a scripted LLM, not generated prose."""
     def forbidden(*args, **kwargs):
         pytest.fail("Timing regressions must use fixtures without network or real credentials")
@@ -143,6 +148,7 @@ def test_timing_presentation_contract_reaches_model_and_trace_from_baseline_fixt
     sent = json.loads(tool_outputs(client.requests[-1])[-1]["output"])
     departure = sent["board"]["departures"][0]["departure"]
     assert departure["departure_time_description"] == time_description
+    assert departure["passenger_delay_description"] == passenger
     golden = case["expected_facts"]["departures"][0]
     for key in ("scheduled_departure_utc", "estimated_departure_utc", "scheduled_local",
                 "estimated_local", "delay_seconds", "delay_status", "delay_description"):
@@ -153,6 +159,8 @@ def test_timing_presentation_contract_reaches_model_and_trace_from_baseline_fixt
         assert "keep the labelled schedule as reference" in request["instructions"]
         assert "real-time estimate is unavailable" in request["instructions"]
         assert "Never substitute a scheduled time" in request["instructions"]
+        assert "passenger_delay_description verbatim" in request["instructions"]
+        assert "do not calculate or round delays yourself" in request["instructions"]
     fixture.assert_all_used()
     assert fixture.miss_count == 0
 

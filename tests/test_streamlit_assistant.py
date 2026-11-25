@@ -10,6 +10,7 @@ import agent
 import departure_service
 import ptv
 from models import Departure, DepartureBoard, DepartureWithDisruptions
+from conversation import ConversationState
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "streamlit_app.py"
@@ -70,16 +71,18 @@ def test_question_and_final_answer_persist_without_another_agent_call(assistant)
     assert not application.exception
     assert application.session_state["chat_messages"] == expected
     assert len(application.chat_message) == 2
-    assistant.assert_called_once_with(QUESTION)
+    assistant.assert_called_once_with(QUESTION, conversation=application.session_state["conversation_state"])
 
 
-def test_multiple_questions_keep_display_history_but_are_independent_runs(assistant):
+def test_multiple_questions_keep_display_history_and_share_only_session_preferences(assistant):
     assistant.side_effect = ["Richmond answer.", "Glen Waverley answer."]
     application = ask(app())
     second_question = "What are the next trains from Glen Waverley?"
     ask(application, second_question)
     assert not application.exception
-    assert assistant.call_args_list == [call(QUESTION), call(second_question)]
+    conversation = application.session_state["conversation_state"]
+    assert assistant.call_args_list == [call(QUESTION, conversation=conversation),
+                                        call(second_question, conversation=conversation)]
     assert [message["content"] for message in application.session_state["chat_messages"]] == [
         QUESTION, "Richmond answer.", second_question, "Glen Waverley answer.",
     ]
@@ -103,7 +106,7 @@ def test_failures_show_safe_messages_and_do_not_retry_on_rerun(assistant, error)
     application.run()
     assert not application.exception
     assert application.error[0].value == friendly_message
-    assistant.assert_called_once_with(QUESTION)
+    assistant.assert_called_once_with(QUESTION, conversation=application.session_state["conversation_state"])
 
 
 def test_new_question_can_succeed_after_failure(assistant):
@@ -138,8 +141,9 @@ def test_progress_indicator_wraps_agent_execution(monkeypatch, assistant):
         finally:
             active_spinners.pop()
 
-    def answer(question):
+    def answer(question, *, conversation):
         assert active_spinners == ["Checking train information and disruption notices..."]
+        assert isinstance(conversation, ConversationState)
         return ANSWER
 
     monkeypatch.setattr(st, "spinner", track_spinner)
@@ -169,7 +173,7 @@ def test_chat_and_station_departure_controls_preserve_each_others_state(assistan
     application.button(key="refresh_departures").click().run()
     assert departures.call_count == 2
     assert len(application.chat_message) == 2
-    assistant.assert_called_once_with(QUESTION)
+    assistant.assert_called_once_with(QUESTION, conversation=application.session_state["conversation_state"])
 
     search.return_value = []
     application.text_input[0].set_value("Unknown station")
@@ -179,14 +183,66 @@ def test_chat_and_station_departure_controls_preserve_each_others_state(assistan
     assert len(application.chat_message) == 2
     assert application.session_state["chat_messages"][-1]["content"] == ANSWER
     assert not application.dataframe
-    assistant.assert_called_once_with(QUESTION)
+    assistant.assert_called_once_with(QUESTION, conversation=application.session_state["conversation_state"])
 
 
 def test_browser_sessions_do_not_share_chat_history(assistant):
     first = ask(app())
+    first_context = first.session_state["conversation_state"]
+    first_context.station_name = "Richmond"
+    first_context.departure_limit = 2
     second = app()
     assert not second.exception
     assert second.session_state["chat_messages"] == []
     assert not second.chat_message
     assert len(first.session_state["chat_messages"]) == 2
-    assistant.assert_called_once_with(QUESTION)
+    second_context = second.session_state["conversation_state"]
+    assert second_context is not first_context
+    assert second_context.preferences() == {"station_name": None, "departure_limit": None}
+    assistant.assert_called_once_with(QUESTION, conversation=first_context)
+
+
+def test_new_conversation_clears_chat_and_preferences_without_resetting_station_board(assistant, services):
+    application = app()
+    application.text_input[0].set_value("Richmond")
+    application.button[0].click().run()
+    application.selectbox[0].select(1).run()
+    ask(application)
+    conversation = application.session_state["conversation_state"]
+    conversation.station_name = "Richmond"
+    conversation.departure_limit = 2
+    application.button(key="new_conversation").click().run()
+    assert not application.exception
+    assert conversation.preferences() == {"station_name": None, "departure_limit": None}
+    assert application.session_state["chat_messages"] == []
+    assert not application.chat_message
+    assert application.session_state["selected_stop_id"] == 1
+    assert len(application.dataframe) == 1
+    assert assistant.call_count == 1
+    services[1].assert_called_once_with(1)
+    ask(application, "What about the next two?")
+    assert assistant.call_args == call("What about the next two?", conversation=conversation)
+    assert len(application.chat_message) == 2
+
+
+def test_ui_reuses_preferences_across_follow_ups_but_does_not_pass_display_history(assistant):
+    snapshots = []
+
+    def answer(question, *, conversation):
+        snapshots.append(conversation.preferences())
+        if question == QUESTION:
+            conversation.station_name = "Richmond"
+            conversation.departure_limit = 5
+        else:
+            assert question == "What about the next two?"
+            conversation.departure_limit = 2
+        return ANSWER
+
+    assistant.side_effect = answer
+    application = ask(app())
+    ask(application, "What about the next two?")
+    assert not application.exception
+    assert snapshots == [{"station_name": None, "departure_limit": None},
+                         {"station_name": "Richmond", "departure_limit": 5}]
+    assert application.session_state["conversation_state"].departure_limit == 2
+    assert all(set(item.kwargs) == {"conversation"} for item in assistant.call_args_list)

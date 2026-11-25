@@ -203,6 +203,23 @@ def test_wrong_early_wording_fails_only_the_defined_contract(late_case):
     assert scored["manual_review"]["factual_accuracy"] is None
 
 
+@pytest.mark.parametrize("case_id,passenger_answer", [
+    ("richmond_30_seconds_late", "Estimate is close to the schedule; timing may change."),
+    ("richmond_30_seconds_early", "Slightly early (estimated)."),
+    ("mixed_departure_delays", "Slightly early (estimated). About 2 minutes late (estimated). "
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
+])
+def test_new_passenger_wording_does_not_silently_pass_frozen_exact_seconds_contract(case_id, passenger_answer):
+    case = next(case for case in DATASET["cases"] if case["case_id"] == case_id)
+    result = saved_result(case)
+    result["final_answer"] = passenger_answer
+    scored = score(case, result)
+    assert scored["metrics"]["source_facts"]["status"] == "pass"
+    assert scored["metrics"]["timing_wording"]["status"] == "fail"
+    assert scored["automated_checks_passed"] is False
+    assert scored["manual_review"]["factual_accuracy"] is None
+
+
 def test_sentence_presence_is_not_a_grounding_or_accuracy_score(late_case):
     result = saved_result(late_case)
     result["final_answer"] += " Actually, the train is early and guaranteed to arrive on time."

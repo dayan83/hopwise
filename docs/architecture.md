@@ -13,9 +13,11 @@ own authentication, departure matching or HTTP implementation.
 | [ptv.py](../ptv.py) | Load configuration, sign requests, call PTV and parse responses |
 | [models.py](../models.py) | Validate structured records and normalize aware timestamps to UTC |
 | [departure_service.py](../departure_service.py) | Match notices, share fallback lookups and interpret timing/relevance |
+| [departure_presentation.py](../departure_presentation.py) | Format passenger wording from already calculated delay seconds |
 | [agent_tools.py](../agent_tools.py) | Validate tool arguments and serialize service results for the LLM |
 | [agent.py](../agent.py) | Execute the bounded Responses API tool-calling loop |
 | [agent_trace.py](../agent_trace.py) | Capture optional sanitized execution snapshots |
+| [conversation.py](../conversation.py) | Store session preferences without caching transport records |
 | [streamlit_app.py](../streamlit_app.py) | Render station search, departure boards, notices and chat |
 | [ask_hopwise.py](../ask_hopwise.py) | Configure one terminal question and optionally print its trace |
 
@@ -88,7 +90,7 @@ uses `zoneinfo` with `Australia/Melbourne`; Windows uses the locked `tzdata`
 dependency for the timezone database.
 
 `departure_delay()` calculates **estimated minus scheduled**. `interpret_delay()`
-supplies its wording without changing that calculation:
+supplies exact diagnostic wording without changing that calculation:
 
 | Difference | Meaning |
 | --- | --- |
@@ -100,8 +102,38 @@ supplies its wording without changing that calculation:
 The tool adapter also supplies `departure_time_description`: an available estimate
 comes first, the schedule remains labelled reference information, and a missing
 estimate is explicitly unavailable. It never fills an estimate from the schedule.
-The agent is instructed to use the supplied descriptions verbatim; final LLM
-compliance remains an evaluation concern.
+The agent is instructed to use this time description verbatim, preserving timestamp
+seconds and the prominence of an available estimate.
+
+### Passenger delay wording
+
+`departure_presentation.passenger_delay_description()` formats the already calculated
+signed difference. Both the agent tool output and Streamlit's existing Timing
+column use it. It does not change `departure_delay()`, `delay_seconds`,
+`delay_status`, exact `delay_description` diagnostics, or original timestamps.
+The new tool field is `passenger_delay_description`; traces retain both forms.
+
+| Difference | Passenger wording |
+| --- | --- |
+| Exactly zero | The estimate matches the schedule; this is not a guarantee of on-time operation. |
+| More than zero, less than 60 seconds late | Estimate is close to the schedule; timing may change. |
+| Less than 60 seconds early | Slightly early (estimated). |
+| At least 60 seconds early/late | About N minute(s) early/late (estimated). |
+| Missing comparison | Timing comparison unavailable: a scheduled time or real-time estimate is missing. |
+
+For magnitudes of at least 60 seconds, round to the **nearest whole minute,
+with exact half-minutes rounded up in magnitude**: `floor(abs(seconds) / 60 + 0.5)`.
+This is deliberately not Python's ties-to-even `round()` behaviour. Thus 60 and
+61 seconds become about 1 minute late, 129 become about 2 minutes late, 245 become
+about 4 minutes late, and 90 seconds early becomes about 2 minutes early. At the
+threshold, 59 seconds late receives the neutral sentence; 60 receives about 1 minute.
+
+Small positive differences still have raw status `late`, never zero or `on time`.
+Early estimates remain prominently displayed even when described as slightly early.
+Streamlit retains explicit placeholders for unavailable estimates or schedules.
+The agent uses `passenger_delay_description` verbatim for ordinary answers and
+keeps exact seconds for an explicit diagnostic request. It does not perform the
+rounding itself. Final LLM compliance remains an evaluation concern.
 
 Relevance annotations compare complete date bounds with the departure timestamp
 and identify explicitly affected boarding/other stop IDs. Missing bounds or
@@ -114,8 +146,51 @@ or causes from notice prose.
 Streamlit session state preserves the selected stop, fetched board, successful
 refresh time and displayed chat history across reruns. Departures load on station
 selection or explicit refresh. A failed refresh retains the earlier board with a
-warning. Chat history is for display: each question starts a new agent context
-and does not inherit the selected station or previous messages.
+warning. Chat history is for display. The assistant separately owns one
+`ConversationState` in `st.session_state`, containing just `station_name` and
+`departure_limit`. It never inherits the manual selector's stop ID. Each chat
+turn starts with a new tool context and no trusted stop IDs or old tool results.
+
+### Basic conversation continuity
+
+`answer_question()` and `answer_question_from_env()` accept an optional
+`conversation=ConversationState()` while continuing to return strings. Callers
+reuse their own object across turns. Streamlit creates one per browser session;
+the terminal CLI and the existing evaluation runner omit it and keep their
+single-turn behaviour and base instructions.
+
+Only station/count preferences enter the next model request as explicitly labelled
+data, alongside additional conversation instructions. Previous user/assistant
+transcripts, IDs, departures and disruption records are not replayed. Every
+departure follow-up must search again and then fetch a new board. Existing strict
+schemas, the two-tool allowlist, five-round limit and safe API errors still apply.
+
+In conversation mode, a search authorizes only its sole result or unique exact
+station-name match (case-insensitive, ignoring a trailing `Station`). Another stop
+from the same search is not authorized. Ambiguous searches stop for a deterministic
+clarification, and empty/failed searches clear the active station so a subsequent
+follow-up cannot silently revert to the old one. Clarification requires a station
+name; ordinal choices such as "the second one" are not stored or resolved.
+
+The last validated departure limit is remembered even if retrieval fails, allowing
+a retry with the same station/count. No failed retrieval supplies an old board.
+A final response without a verified departure attempt is replaced by a station
+clarification when no station is known, or rejected with `fresh_data_required`
+when fresh information was required. This prevents unsupported departure answers
+from being presented as a successful follow-up.
+
+**New conversation** resets both preference fields and the displayed chat. It
+does not reset the separate station/departure view. Preferences are in memory only;
+they are neither shared between sessions nor stored in persistent accounts.
+This supports basic station/count continuity, not general transcript memory or
+journey planning. Natural-language intent/count interpretation and final wording
+still depend on the LLM and need real-model evaluation.
+
+Run the offline continuity checks:
+
+```sh
+uv run pytest -q tests/test_conversation.py tests/test_streamlit_assistant.py
+```
 
 `PTVConfig` reads `.env` through `python-dotenv`; existing environment variables
 take precedence. `PTVAuth` signs the exact encoded path/query using HMAC-SHA1.

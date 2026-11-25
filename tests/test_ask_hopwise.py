@@ -89,6 +89,19 @@ def test_environment_entry_point_forwards_trace(monkeypatch):
                                 model="test-model", trace=trace)
 
 
+def test_environment_entry_point_forwards_optional_conversation(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "private-test-key")
+    monkeypatch.setenv("OPENAI_MODEL", "test-model")
+    factory = MagicMock()
+    run = Mock(return_value="Answer.")
+    monkeypatch.setattr(agent, "OpenAI", factory)
+    monkeypatch.setattr(agent, "answer_question", run)
+    conversation = agent.ConversationState("Richmond", 2)
+    assert agent.answer_question_from_env("Next two?", conversation=conversation) == "Answer."
+    run.assert_called_once_with("Next two?", client=factory.return_value.__enter__.return_value,
+                                model="test-model", conversation=conversation)
+
+
 def test_trace_is_printed_for_missing_configuration_without_creating_client(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["ask_hopwise.py", "--trace"])
     factory = Mock()

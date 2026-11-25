@@ -62,7 +62,7 @@ def test_shared_notice_displayed_once_with_references_for_each_departure(search,
     assert not application.exception
     rows = application.dataframe[0].value
     assert list(rows["Notices"]) == ["Notice 101", "Notice 101"]
-    assert list(rows["Timing"]) == ["No estimate available", "On time (estimated)"]
+    assert list(rows["Timing"]) == ["No estimate available", "The estimate matches the schedule; this is not a guarantee of on-time operation."]
     assert len(application.expander) == 1
     assert application.expander[0].label == "Notice 101: Service notice"
     assert not application.expander[0].proto.expanded

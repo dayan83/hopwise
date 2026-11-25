@@ -57,20 +57,24 @@ def test_adapters_reuse_services_and_serialize_board(context, monkeypatch):
     assert context.config.dev_id not in serialized
 
 
-@pytest.mark.parametrize("scheduled,estimated,seconds,status,description", [
+@pytest.mark.parametrize("scheduled,estimated,seconds,status,description,passenger", [
     ("2026-11-17T22:58:00Z", "2026-11-17T22:58:30Z", 30, "late",
-     "Estimated 30 seconds late relative to the schedule."),
+     "Estimated 30 seconds late relative to the schedule.",
+     "Estimate is close to the schedule; timing may change."),
     ("2026-11-17T22:58:00Z", "2026-11-17T22:57:30Z", -30, "early",
-     "Estimated 30 seconds early relative to the schedule."),
+     "Estimated 30 seconds early relative to the schedule.", "Slightly early (estimated)."),
     ("2026-11-17T22:58:00Z", "2026-11-17T22:58:00Z", 0, "matches_schedule",
+     "The estimate matches the schedule; this is not a guarantee of on-time operation.",
      "The estimate matches the schedule; this is not a guarantee of on-time operation."),
     ("2026-11-17T22:58:00Z", None, None, "unknown",
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing.",
      "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
     (None, "2026-11-17T22:58:30Z", None, "unknown",
+     "Timing comparison unavailable: a scheduled time or real-time estimate is missing.",
      "Timing comparison unavailable: a scheduled time or real-time estimate is missing."),
 ])
 def test_departure_tool_supplies_timing_interpretation_without_changing_timestamps(
-        context, monkeypatch, scheduled, estimated, seconds, status, description):
+        context, monkeypatch, scheduled, estimated, seconds, status, description, passenger):
     context.known_stop_ids.add(1)
     board = DepartureBoard(stop_id=1, departures=[DepartureWithDisruptions(departure=Departure(
         stop_id=1, scheduled_departure_utc=scheduled, estimated_departure_utc=estimated))])
@@ -85,6 +89,7 @@ def test_departure_tool_supplies_timing_interpretation_without_changing_timestam
     assert departure["delay_seconds"] == seconds
     assert departure["delay_status"] == status
     assert departure["delay_description"] == description
+    assert departure["passenger_delay_description"] == passenger
     assert board.model_dump(mode="json") == original
     fetch.assert_called_once_with(1, max_results=5, config=context.config, transport=None)
 

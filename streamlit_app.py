@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import streamlit as st
 
 from agent import AgentError, answer_question_from_env
+from conversation import ConversationState
+from departure_presentation import passenger_delay_description
 from departure_service import departure_delay, get_departures_with_disruptions
 from models import Departure, DepartureBoard, DepartureWithDisruptions, Disruption
 from ptv import PTVRequestError, search_stations
@@ -28,12 +30,7 @@ def _timing(departure: Departure) -> str:
     delay = departure_delay(departure)
     if delay is None:
         return "Delay unavailable (no scheduled time)"
-    seconds = delay.total_seconds()
-    if seconds == 0:
-        return "On time (estimated)"
-    magnitude = abs(seconds)
-    duration = f"{magnitude:g} sec" if magnitude < 60 else f"{magnitude / 60:g} min"
-    return f"{duration} {'late' if seconds > 0 else 'early'} (estimated)"
+    return passenger_delay_description(delay.total_seconds())
 
 
 def _notice_summary(entry: DepartureWithDisruptions) -> str:
@@ -149,8 +146,12 @@ def _show_departures(stop_id: int):
 def _show_ai_assistant():
     st.divider()
     st.subheader("Hopwise AI Assistant")
-    st.caption("Ask a complete question, such as: What are the next trains from Richmond, "
-               "and are there any disruptions? Each question is handled independently.")
+    st.caption("Ask about a station, then follow up with questions such as 'What about the next two?' "
+               "Station and count preferences are remembered; departures are retrieved again each turn.")
+    conversation = st.session_state.setdefault("conversation_state", ConversationState())
+    if st.button("New conversation", key="new_conversation"):
+        conversation.reset()
+        st.session_state.chat_messages = []
     messages = st.session_state.setdefault("chat_messages", [])
     for message in messages:
         with st.chat_message(message["role"]):
@@ -171,7 +172,7 @@ def _show_ai_assistant():
     with st.chat_message("assistant"):
         try:
             with st.spinner("Checking train information and disruption notices..."):
-                answer = answer_question_from_env(question)
+                answer = answer_question_from_env(question, conversation=conversation)
         except (AgentError, PTVRequestError, ValueError):
             # Raw SDK/backend diagnostics can contain secrets; show a fixed message.
             message = ("Sorry, I couldn't retrieve train information right now. "

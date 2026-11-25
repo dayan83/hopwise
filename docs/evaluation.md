@@ -135,6 +135,32 @@ remain failures in the denominator; `not_applicable` is distinct from pass.
 Literal sentence presence and correct source records are not proof that every
 claim in the final answer is accurate or grounded.
 
+### Passenger wording compatibility (25 November 2026)
+
+The passenger presentation policy now uses a separate `passenger_delay_description`
+with neutral sub-minute late wording, "Slightly early" for sub-minute early
+estimates, and approximate whole minutes otherwise. The original raw seconds,
+statuses, diagnostic descriptions and UTC/local timestamps remain available.
+See the [rounding policy](architecture.md#passenger-delay-wording).
+
+Dataset v0.3.0 and its scoring logic remain frozen. In particular, its
+`timing_wording` metric still requires the literal diagnostic `delay_description`
+in the final answer. A correct answer using only the new passenger wording will
+therefore intentionally **fail that legacy wording contract** for
+`richmond_30_seconds_late`, `richmond_30_seconds_early` and
+`mixed_departure_delays`. Source-fact checks still validate the unchanged exact
+values. Missing-estimate and equal-time descriptions retain their existing wording.
+
+Regression tests explicitly preserve this failure: the scorer has not been
+weakened to accept keywords, either wording, or a blanket pass. Existing saved
+results and manual labels are not rewritten. The old response notes also reflect
+the historical wording policy; distinguish a policy mismatch from a numerical or
+grounding error when reviewing future results.
+
+Comparable passenger-wording scores require a separately versioned set of
+wording expectations and review guidance. This change does not claim improved
+real-model scores or migrate that evaluation contract.
+
 ### Failure and safety coverage in v0.3.0
 
 The departures-error fixture returns HTTP 503 with a synthetic service-unavailable

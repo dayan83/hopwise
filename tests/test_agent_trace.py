@@ -106,9 +106,11 @@ def test_trace_records_search_and_departures(services):
     assert first["departure"]["delay_seconds"] == 30
     assert first["departure"]["delay_status"] == "late"
     assert first["departure"]["delay_description"] == "Estimated 30 seconds late relative to the schedule."
+    assert first["departure"]["passenger_delay_description"] == "Estimate is close to the schedule; timing may change."
     sent = json.loads(client.requests[-1]["input"][-1]["output"])["board"]["departures"][0]["departure"]
     assert sent["delay_status"] == first["departure"]["delay_status"]
     assert sent["delay_description"] == first["departure"]["delay_description"]
+    assert sent["passenger_delay_description"] == first["departure"]["passenger_delay_description"]
     assert first["departure"]["run_ref"] == "run-A"
     assert first["departure"]["disruption_ids"] == [101, 999]
     assert first["unresolved_disruption_ids"] == [999]
